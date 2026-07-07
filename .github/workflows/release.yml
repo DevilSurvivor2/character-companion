@@ -34,6 +34,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
+          # Skip if a release for this tag already exists — e.g. the tag was
+          # re-pushed after a history rewrite. Avoids a duplicate draft and a
+          # spurious "release already exists" failure.
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists — nothing to do."
+            exit 0
+          fi
           gh release create "$tag" \
             --title="$tag" \
             --draft \
