@@ -62,7 +62,7 @@
       "id": "mr140fueedzx39",
       "name": "Artemis",
       "modifier": "Pure Moonlight Hunter",
-      "type": "Constellation",
+      "origin": "",
       "enabled": true,
       "reactions": [
         "$verb.s() the $topic $manner",
@@ -149,7 +149,7 @@
       "id": "mr140fuerp6b1i",
       "name": "Apollo",
       "modifier": "Almighty Sun",
-      "type": "Constellation",
+      "origin": "",
       "enabled": true,
       "reactions": [
         "finds the $craft of this $topic $verdict",
@@ -226,7 +226,7 @@
           "as a critic",
           "in measured tones",
           "with a raised brow",
-          "as a laurel judge"
+          "thoughtfully"
         ],
         "art": [
           "sonnet",
@@ -241,7 +241,7 @@
       "id": "mr140fueyygvt6",
       "name": "Ares",
       "modifier": "Atrocious Warmonger",
-      "type": "Constellation",
+      "origin": "",
       "enabled": true,
       "reactions": [
         "$verb.s() $manner",
@@ -327,7 +327,7 @@
       "id": "mr140fueknz7fh",
       "name": "Noah",
       "modifier": "Master of the Ark",
-      "type": "Constellation",
+      "origin": "",
       "enabled": true,
       "reactions": [
         "$verb.s() the rising $topic $manner",
@@ -419,7 +419,7 @@
       "id": "mr140fueej37fa",
       "name": "Thor",
       "modifier": "Thursday's Thunder",
-      "type": "Constellation",
+      "origin": "",
       "enabled": true,
       "reactions": [
         "$verb.s() $manner",
@@ -501,7 +501,7 @@
       "id": "mr140fueht71k8",
       "name": "Loki",
       "modifier": "Lame Trickster",
-      "type": "Constellation",
+      "origin": "",
       "enabled": true,
       "reactions": [
         "is $intensifier $mood",
@@ -594,7 +594,7 @@
       "id": "mr140fued7s1b9",
       "name": "Nyarlathotep",
       "modifier": "Crawling Chaos",
-      "type": "Constellation",
+      "origin": "",
       "enabled": true,
       "reactions": [
         "finds this $flavor performance $intensifier fascinating",
@@ -675,7 +675,7 @@
       "id": "mr140fue0n9rg3",
       "name": "Philemon",
       "modifier": "All-Encompassing Dream",
-      "type": "Constellation",
+      "origin": "",
       "enabled": true,
       "reactions": [
         "$verb.s() the $topic $manner",
@@ -766,7 +766,7 @@
       "id": "mr140fueemxpoc",
       "name": "Lucifer",
       "modifier": "Morning Star",
-      "type": "Constellation",
+      "origin": "",
       "enabled": true,
       "reactions": [
         "scoffs at this $flavor display",

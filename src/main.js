@@ -64,6 +64,11 @@ const ANIM_BY_NAME = Object.fromEntries(ANIMATIONS.map((a) => [a.name, a]));
 const ANIMS_BY_ROLE = {};
 for (const a of ANIMATIONS)
     (ANIMS_BY_ROLE[a.role] ??= []).push(a.name);
+// Animation pools by role: the settings flag toggling each + the full list — the single source pairing a toggleable role with its enable map. enabledList and the settings grids read it, and FLAG_MAPS derives its animation rows from it.
+const ANIM_POOLS = {
+    surprise: { flag: "enabledSurprises", all: ANIMS_BY_ROLE.surprise },
+    idle: { flag: "enabledIdles", all: ANIMS_BY_ROLE.idle },
+};
 // Held-fidget escalation ladder: a carried sprite climbs these "effect" shakes, one rung every N bouts (random 1..--cc-hold-wiggle-bouts), holding on the last.
 const HOLD_SHAKES = ["shake-small", "shake-large"];
 // Every anim class, cleared before a new one so they can't stack.
@@ -76,12 +81,12 @@ const CHARACTER_TOGGLES = [
 ];
 // Sidebar-panel action buttons (vertical icon column down the right edge). Add a row: `run(view)` is the click, optional `active(view)` lights it as a toggle.
 const SIDEBAR_BUTTONS = [
-    { key: "shuffle", icon: "shuffle", label: "Show another character", run: (v) => v.pickAnotherCharacter() },
-    { key: "settings", icon: "settings", label: "Open plugin settings", run: (v) => v.openPluginSettings() },
-    { key: "stream", icon: "radio", label: "Toggle stream mode", run: (v) => v.toggleMode("stream"), active: (v) => v.plugin.settings.streamEnabled },
-    { key: "oracle", icon: "sparkles", label: "Toggle oracle mode", run: (v) => v.toggleMode("oracle"), active: (v) => v.plugin.settings.oracleEnabled },
-    { key: "mail", icon: "mail", label: "Toggle mail mode", run: (v) => v.toggleMode("mail"), active: (v) => v.plugin.settings.mailEnabled },
-    { key: "blog", icon: "at-sign", label: "Toggle blog mode", run: (v) => v.toggleMode("blog"), active: (v) => v.plugin.settings.blogEnabled },
+    { icon: "shuffle", label: "Show another character", run: (v) => v.pickAnotherCharacter() },
+    { icon: "settings", label: "Open plugin settings", run: (v) => v.openPluginSettings() },
+    { icon: "radio", label: "Toggle stream mode", run: (v) => v.toggleMode("stream"), active: (v) => v.plugin.settings.streamEnabled },
+    { icon: "sparkles", label: "Toggle oracle mode", run: (v) => v.toggleMode("oracle"), active: (v) => v.plugin.settings.oracleEnabled },
+    { icon: "mail", label: "Toggle mail mode", run: (v) => v.toggleMode("mail"), active: (v) => v.plugin.settings.mailEnabled },
+    { icon: "at-sign", label: "Toggle blog mode", run: (v) => v.toggleMode("blog"), active: (v) => v.plugin.settings.blogEnabled },
 ];
 // Feed sources: one row drives bag/stop/timer/sync. pool = draw list (non-repeat via Bag); push = one beat. RiScript-templated.
 const FEED_SOURCES = [
@@ -391,10 +396,9 @@ const DEFAULT_SETTINGS = {
 // Oracle name fallbacks: what $system and the patron pool resolve to when the field is left blank. One source, reused as the settings placeholders so the hint always matches the actual fallback.
 const ORACLE_SYS_FALLBACK = "Star Stream";
 const ORACLE_PATRON_FALLBACK = "Constellation";
-// The enable maps (flag-per-name): [settings key, names, default]. One row drives both the defaults (filled into DEFAULT_SETTINGS below) and loadSettings' re-normalisation — keep known flags, default any newly added name to the row's default. Effects start OFF (each is an opt-in overlay); the rest ON.
+// The enable maps (flag-per-name): [settings key, names, default]. One row drives both the defaults (filled into DEFAULT_SETTINGS below) and loadSettings' re-normalisation — keep known flags, default any newly added name to the row's default. The animation rows spread from ANIM_POOLS so the role↔flag pairing lives in one place. Effects start OFF (each is an opt-in overlay); the rest ON.
 const FLAG_MAPS = [
-    ["enabledSurprises", ANIMS_BY_ROLE.surprise, true],
-    ["enabledIdles", ANIMS_BY_ROLE.idle, true],
+    ...Object.values(ANIM_POOLS).map((p) => [p.flag, p.all, true]),
     ["enabledEffects", SPECIAL_EFFECT_KEYS, false],
     ["enabledAesthetics", AESTHETIC_KEYS, true],
 ];
@@ -484,10 +488,7 @@ function resolvePathList(app, paths) {
                 .map((f) => app.vault.getResourcePath(f));
         }
     }
-    return raw
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0)
+    return commaList(raw)
         .map((p) => isEmoji(p) ? emojiUrl(p) : resolveSpriteUrl(app, p))
         .filter((u) => u !== null);
 }
@@ -637,11 +638,6 @@ function playAnimation(imgEl, spec, onEnd) {
             onEnd();
     }, animationDurationMs(imgEl));
 }
-// Animation pools by role: the settings flag toggling each + the full list. So surprise and idle share one code path (enabledList).
-const ANIM_POOLS = {
-    surprise: { flag: "enabledSurprises", all: ANIMS_BY_ROLE.surprise },
-    idle: { flag: "enabledIdles", all: ANIMS_BY_ROLE.idle },
-};
 // A role's enabled animations, optionally limited to the walker-safe subset (root:false keeps a move off the floor).
 function enabledList(settings, role, rootOnly) {
     const pool = ANIM_POOLS[role];
@@ -1994,10 +1990,6 @@ class Oracle {
     evaluate(line, extra) {
         return this.plugin.riscript.evaluate(line, Object.assign({}, this.staticCtx, extra));
     }
-    // Draw from a per-key non-repeat bag (per-VIP reactions/asides) — the same ??= idiom as Walker.roleBags.
-    bagDraw(bags, key, list) {
-        return (bags[key] ??= new Bag()).next(list);
-    }
     // Push a finished line, guaranteeing terminal punctuation (so templates needn't all end in a period). Leaves an existing . ! ? … (incl. a trailing closing quote/bracket) untouched.
     emit(text, cls) {
         const s = (text || "").trim();
@@ -2022,10 +2014,10 @@ class Oracle {
         // This VIP's variables ($verb/$manner/…) + per-line vars (frames also reach the shared constants/transforms via evaluate). Reused across sentences — evaluate never mutates it. `topic` is assigned AFTER choiceRules so the beat's chosen echo wins over the raw vars.topic choice-rule (which would otherwise re-pick per reference).
         const vipCtx = Object.assign(choiceRules(vip.vars), { patron, modifier: vip.modifier || vip.name, topic });
         // Sentence 1 carries the prefix; follow-ups are bare asides (per the requested examples).
-        let line = this.evaluate('The $patron "$modifier" ' + this.bagDraw(this.reactionBags, vip.name, vip.reactions) + ".", vipCtx);
+        let line = this.evaluate('The $patron "$modifier" ' + (this.reactionBags[vip.name] ??= new Bag()).next(vip.reactions) + ".", vipCtx);
         if (vip.asides.length) {
             const r = Math.random(), t = tuning();
-            const aside = () => " " + this.evaluate(this.bagDraw(this.asideBags, vip.name, vip.asides), vipCtx);
+            const aside = () => " " + this.evaluate((this.asideBags[vip.name] ??= new Bag()).next(vip.asides), vipCtx);
             if (r < t.oracleAside2Chance) line += aside();
             if (r < t.oracleAside3Chance) line += aside();
         }
@@ -2341,10 +2333,10 @@ class CompanionView extends ItemView {
         if (!anchor)
             return;
         const streaming = this.settings.streamEnabled;
+        // Only the shown image needs the reset — the bag reshuffles itself on a source-list change (Bag.next's signature check).
         if (this.bgSig !== this.settings.streamBackgrounds) {
             this.bgSig = this.settings.streamBackgrounds;
             this.bgUrl = null;
-            this.bgBag = new Bag();
         }
         if (streaming && !this.bgUrl)
             this.bgUrl = this.nextBg();
@@ -2593,7 +2585,7 @@ class CompanionView extends ItemView {
     }
 }
 /* ---------------- settings tab ---------------- */
-// Reusable name-pill list + editor (pill grid with click-to-select + drag-reorder, Add button, per-item editor). cfg: { items, makeItem, labelOf, addText, pickName, pickDesc, emptyText, renderBody, onMutate, onAdd?, onDelete?, rerender }.
+// Reusable name-pill list + editor (pill grid with click-to-select + drag-reorder, Add button, per-item editor). cfg: { items, makeItem, labelOf, addText, pickName, pickDesc, emptyText, renderBody, onMutate, save, onAdd?, onDelete? }.
 class ListEditor {
     constructor(tab, cfg) {
         this.tab = tab;
@@ -2611,8 +2603,8 @@ class ListEditor {
         this.suppressNextClick = false;
     }
     get plugin() { return this.tab.plugin; }
-    // Persist a list mutation: lists backed by their own file pass cfg.save (Oracle); the rest fall through to the normal settings save with the list's rerender flag.
-    persist() { return this.cfg.save ? this.cfg.save() : this.plugin.saveSettings(this.cfg.rerender); }
+    // Persist a list mutation through the tab's shared commit tail. Every list is backed by its own data file, so cfg.save always points there.
+    persist() { return this.tab.commit(this.cfg.save); }
     // Build the Add button, the pill grid, and the editor host into containerEl.
     mount(containerEl) {
         new Setting(containerEl)
@@ -2756,7 +2748,7 @@ class ListEditor {
         else
             host.createDiv({ cls: "cc-empty", text: this.cfg.emptyText });
     }
-    // Remove an item (the editor's delete button routes here): drop it, let the owner patch up dependent state, persist, refresh dependent UI, rebuild.
+    // Remove an item (the pill right-click menu routes here — the only delete path): drop it, let the owner patch up dependent state, persist, refresh dependent UI, rebuild.
     async deleteItem(id) {
         const items = this.cfg.items();
         const i = items.findIndex((c) => c.id === id);
@@ -3741,7 +3733,7 @@ class CharacterCompanionPlugin extends Plugin {
         if (desc.seed && !existed && shapeIsEmpty(shaped)) {
             const seedRaw = await desc.seed(this);
             if (seedRaw)
-                shaped = desc.shape(seedRaw, null);
+                shaped = desc.shape(seedRaw);
         }
         this[desc.prop] = shaped;
         if (desc.create && !existed)
