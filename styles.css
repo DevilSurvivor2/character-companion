@@ -25,9 +25,9 @@
     --cc-flip-swap: 300ms;            /* when the image swap happens (hidden edge-on) */
     --cc-flip-cooldown: 12000ms;      /* min gap between two flips */
     --cc-walk-max-frame: 100ms;
-    --cc-shy-radius: 180px;
-    --cc-shy-speed-mult: 2.2;
-    --cc-curious-gap: 90px;
+    --cc-react-radius: 120px;             /* cursor react: how near the cursor must be to steer a sprite (also a flee's run distance) */
+    --cc-react-speed-mult: 2.2;           /* pace boost on a steered walk, flee and approach alike */
+    --cc-curious-gap: 90px;               /* how near an approach parks to watch */
     --cc-curious-watch-min: 3000ms;       /* watch window before a curiosity-chatter roll */
     --cc-curious-watch-max: 4000ms;
     --cc-curious-chatter-chance: 0.25;    /* chance, per watch window, to speak at the cursor */

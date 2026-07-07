@@ -736,9 +736,9 @@ class Walker {
         this.imgEl = els.imgEl;
         this.bubbleEl = els.bubbleEl;
         // Set only for a fixed (frame-escaping) sidebar bubble: the element whose head the bubble is JS-positioned over. Null for the floor bubble (an absolute child of its own walker wrap, positioned by CSS).
-        this.bubbleAnchor = els.bubbleAnchor || null;
+        this.bubbleAnchorEl = els.bubbleAnchorEl || null;
         // Images/quotes are per-sprite; idle/surprise share one bag each across the troupe (stage cycles them without repeats), falling back to private when stageless.
-        this.bag = new Bag();
+        this.spriteBag = new Bag();
         this.quoteBag = new Bag();
         this.idleBag = stage ? stage.idleBag : new Bag();
         this.surpriseBag = stage ? stage.surpriseBag : new Bag();
@@ -756,8 +756,10 @@ class Walker {
         // Start inside the rest band so even a standing (0%) walker isn't jammed against an edge. (A stage-less sprite isn't x-positioned.)
         const band = stage ? stage.restBand() : null;
         this.x = band ? randRange(band.lo, band.hi) : 0;
-        this.dir = 1;
-        this.remaining = 0;
+        this.walkDir = 1;
+        this.walkDist = 0;
+        // The walk's live pace. beginWalk starts it at the walker's own speed; cursor react steers it (and walkDir/walkDist) mid-walk.
+        this.walkPace = speed;
         this.mode = MODE.REST;
         this.interruptible = false;
         // Provisional; beginRest (via createWalker / first resume) sets the real one.
@@ -782,12 +784,11 @@ class Walker {
         this.actList = null;
         this.actLoop = false;
         this.watchUntil = 0;
-        this.fleeing = false;
-        this.settleTimer = null;
+        this.easeTimer = null;
         this.bubbleTimer = null;
         // Sleep clock: time of last interaction.
         this.lastInteraction = Date.now();
-        this.imgEl.src = this.bag.next(urls);
+        this.imgEl.src = this.spriteBag.next(urls);
         this.imgEl.draggable = false;
         this.imgEl.alt = character.name;
         this.imgEl.addEventListener("pointerdown", (e) => this.onDown(e));
@@ -817,33 +818,35 @@ class Walker {
             this.x = width + margin;
         this.arc(dx);
     }
-    // Advance the walk bob by a stride and set the vertical, leaving x untouched.
+    // Advance the walk bob by a stride and set the vertical, leaving x untouched: one full step per walkStepLength of travel, so every character shares the same bob cycle and only its speed scales the cadence (a boosted flee steps faster too).
     arc(stride) {
         const T = tuning();
         this.phase += (Math.abs(stride) / T.walkStepLength) * Math.PI;
         this.yOffset = T.walkRestY + (T.walkLiftY - T.walkRestY) * Math.abs(Math.sin(this.phase));
     }
-// One frame. HELD/DROP own the sprite and skip cursor-react; only WALK and DROP need per-frame work.
+    // One frame. HELD/DROP own the sprite and skip cursor-react; the react only steers walk variables / requests transitions, then the mode table below does all the moving.
     step(dt) {
-        if (this.mode !== MODE.HELD && this.mode !== MODE.DROP && this.applyCursorReact(dt))
-            return;
+        if (this.mode !== MODE.HELD && this.mode !== MODE.DROP)
+            this.applyCursorReact();
         if (this.mode === MODE.WALK)
             this.walkStep(dt);
         else if (this.mode === MODE.DROP)
             this.dropStep();
     }
-    // WALK body: advance (a flee is just the walk sped up) and settle when spent.
+    // WALK body — the only mover: travel walkDir × walkPace until the distance is spent, settle when done. Cursor react steers it purely by writing the three walk variables (walkDir, walkPace, walkDist). Travel drives the bob; a parked walk (walkPace 0, the cursor stop gap) breathes it at the walker's own speed instead, so a stopped watcher keeps its own cadence (a 0%-speed character never reaches WALK, so the stride is never zero here).
     walkStep(dt) {
-        const speed = this.fleeing ? this.speed * tuning().shySpeedMult : this.speed;
-        const advance = Math.min(speed * dt, this.remaining);
-        this.remaining -= advance;
-        this.advanceAlong(this.dir * advance, activeWindow.innerWidth);
+        const advance = Math.min(this.walkPace * dt, this.walkDist);
+        this.walkDist -= advance;
+        if (this.walkPace > 0)
+            this.advanceAlong(this.walkDir * advance, activeWindow.innerWidth);
+        else
+            this.arc(this.speed * dt);
         this.place();
-        if (this.remaining <= 0)
+        if (this.walkDist <= 0)
             this.settle();
     }
     // Glide the image's (maybe mid-animation) transform back to rest: freeze the live pose inline, arm the eased transition, clear it next reflow so it eases to identity. Returns whether there was a pose to settle (caller waits --cc-ease only if so).
-    settleImagePose() {
+    easeImagePose() {
         const img = this.imgEl;
         const current = activeWindow.getComputedStyle(img).transform;
         stopAnimation(img);
@@ -859,9 +862,11 @@ class Walker {
     easeToward(targetY, then) {
         this.clearActivities();
         this.endWatch();
-        if (this.settleTimer) { window.clearTimeout(this.settleTimer); this.settleTimer = null; }
-        const easingImg = this.settleImagePose();
-        const needY = this.yOffset !== targetY;
+        // A pending ease timer means a previous ease is still in flight: yOffset already holds THAT ease's target, but the rendered position is mid-glide. Count it as movement even when the target matches, so this call re-arms the glide (a live transition retargets smoothly) instead of early-returning — an early return would run `then` mid-glide with cc-eased stranded, and the next setEasing(false) would snap the sprite to the target. (Only the timer is cleared, never endEase: the eased state must survive the retarget.)
+        const gliding = this.easeTimer !== null;
+        if (gliding) { window.clearTimeout(this.easeTimer); this.easeTimer = null; }
+        const easingImg = this.easeImagePose();
+        const needY = gliding || this.yOffset !== targetY;
         if (needY) {
             this.setEasing(true);
             void this.wrapEl.offsetWidth;
@@ -873,58 +878,56 @@ class Walker {
                 then();
             return;
         }
-        this.settleTimer = window.setTimeout(() => {
-            this.settleTimer = null;
-            this.imgEl.classList.remove("cc-eased");
-            this.imgEl.setCssProps({ transform: "" });
-            this.setEasing(false);
+        this.easeTimer = window.setTimeout(() => {
+            this.endEase();
             if (then)
                 then();
         }, tuning().ease);
     }
-    // React to a cursor near the band: flee, or — if curious — approach and (in the stop gap) hold and watch. Only the in-place watch is owned here (returns true); flee/ approach is a fast biased walk that settles like any walk (false).
-    applyCursorReact(dt) {
+    // End the ease now — drop any pending ease timer and strip the eased state (both cc-eased classes and the frozen inline pose) so nothing smooths (or later snaps) a value-driven frame. The timer's own tail AND the cut-short for every early exit (full teardown, drop release); a no-op when nothing is easing.
+    endEase() {
+        if (this.easeTimer) { window.clearTimeout(this.easeTimer); this.easeTimer = null; }
+        this.imgEl.classList.remove("cc-eased");
+        this.imgEl.setCssProps({ transform: "" });
+        this.setEasing(false);
+    }
+    // React to a cursor near the band — pure steering, refreshed every frame while reachable: it only writes the three walk variables (walkDir, walkPace, walkDist) on a live walk, claiming WALK through easeToward first when needed. It never touches the vertical itself — the bob simply rides the walk's stride, so a boosted flee is exactly the plain walk (and its bob) sped up.
+    applyCursorReact() {
         const T = tuning();
         const cursor = this.stage.cursor;
         const gap = this.x - cursor.x;
-        if (cursor.x < 0 || cursor.y < this.stage.stageTop() - T.shyRadius || Math.abs(gap) > T.shyRadius) {
-            this.fleeing = false;
-            return false;
+        // Out of reach: end any watch (so the next visit arms a fresh window), restore the walk's own pace, and let it run out on its own (a fled walker calmly finishes its leftover distance and settles).
+        if (cursor.x < 0 || cursor.y < this.stage.stageTop() - T.reactRadius || Math.abs(gap) > T.reactRadius) {
+            this.endWatch();
+            if (this.mode === MODE.WALK)
+                this.walkPace = this.speed;
+            return;
         }
         if (this.mode === MODE.ANIM && !this.interruptible)
-            return false;
+            return;
         const curious = this.character.curious;
+        // Curious stop gap: park the travel (walkPace 0 — the walk stays in WALK and keeps breathing its bob) and roll the chatter window.
         if (curious && Math.abs(gap) <= T.curiousGap) {
-            // Stop travelling but keep the bob breathing in place (base step rate, so even a 0%-speed character breathes); the loop settles it once the cursor leaves. Claim WALK (the breathing mode) unless already walking.
-            if (this.mode !== MODE.WALK) {
-                this.mode = MODE.ANIM;
-                this.interruptible = false;
-                this.easeToward(T.walkRestY, () => {
-                    this.mode = MODE.WALK;
-                });
-                return true;
-            }
-            this.remaining = 0;
-            this.fleeing = false;
-            this.arc(this.settings.rootWalkSpeed * dt);
-            this.place();
+            if (this.mode === MODE.WALK)
+                this.walkPace = 0;
             this.watchTick();
-            return true;
+            return;
         }
-        // Aim a fast biased walk and let the loop drive it. Re-aim only when not already walking this way, so the walk runs out instead of restarting.
+        // A standing (0%-speed) character can't walk, so it neither flees nor approaches; up close it only chatters (above).
+        if (this.speed <= 0)
+            return;
+        // Steer — one fast biased walk either way, only the direction and target differ: flee = away, running a full radius so it never settles inside one; curious = toward, the gap itself as the distance (the stop gap above parks it on arrival).
         const dir = (gap >= 0 ? 1 : -1) * (curious ? -1 : 1);
-        if (this.mode !== MODE.WALK || !this.fleeing || this.dir !== dir) {
-            if (this.mode !== MODE.WALK) {
-                this.fleeing = true;
-                this.mode = MODE.ANIM;
-                this.interruptible = false;
-                this.easeToward(T.walkRestY, () => this.beginWalk(dir));
-                return false;
-            }
-            this.beginWalk(dir);
+        if (this.mode !== MODE.WALK) {
+            // Claim WALK through the ease. Non-interruptible ANIM doubles as the latch: until beginWalk lands, every frame bounces off the guard above instead of re-claiming.
+            this.mode = MODE.ANIM;
+            this.interruptible = false;
+            this.easeToward(T.walkRestY, () => this.beginWalk(dir));
+            return;
         }
-        this.fleeing = true;
-        return false;
+        this.walkDir = dir;
+        this.walkPace = this.speed * T.reactSpeedMult;
+        this.walkDist = curious ? Math.abs(gap) : T.reactRadius;
     }
     // Curiosity chatter: while watching the cursor, arm a randomised window; each time one elapses, re-arm and roll once to speak a line (skip if a bubble is already up).
     watchTick() {
@@ -955,9 +958,10 @@ class Walker {
         this.endWatch();
         // The arc drives --cc-y every frame, so the smoothing transition must be off.
         this.setEasing(false);
-        // dir/remaining default to random; a walkaside passes an explicit minimum.
-        this.dir = dir ?? (Math.random() < 0.5 ? -1 : 1);
-        this.remaining = remaining ?? Math.random() * T.walkMaxDistanceFrac * activeWindow.innerWidth;
+        // walkDir/walkDist default to random (a walkaside passes an explicit minimum); walkPace starts at the walker's own speed. Cursor react may steer all three mid-walk.
+        this.walkDir = dir ?? (Math.random() < 0.5 ? -1 : 1);
+        this.walkDist = remaining ?? Math.random() * T.walkMaxDistanceFrac * activeWindow.innerWidth;
+        this.walkPace = this.speed;
         this.mode = MODE.WALK;
     }
     // End of a walk: rest only if inside the band; else walk again until visible.
@@ -1072,7 +1076,7 @@ class Walker {
         this.playRole("flip", true);
         // Tracked in actTimers (queued AFTER playRole, whose easeToward clears them) so a teardown mid-flip also cancels the swap.
         this.actTimers.push(window.setTimeout(() => {
-            this.imgEl.src = this.bag.next(this.spriteUrls);
+            this.imgEl.src = this.spriteBag.next(this.spriteUrls);
         }, tuning().flipSwap));
     }
     // Play a random animation of a function-role (flip/bob/tickle/sleep), drawn without repeats from a per-role bag. The single path for every role-named behaviour.
@@ -1127,12 +1131,12 @@ class Walker {
     clearTimers() {
         this.clearActivities();
         stopAnimation(this.imgEl);
-        if (this.settleTimer) { window.clearTimeout(this.settleTimer); this.settleTimer = null; }
+        this.endEase();
         if (this.bubbleTimer) { window.clearTimeout(this.bubbleTimer); this.bubbleTimer = null; }
         if (this.bubbleEl)
             this.bubbleEl.removeClass("cc-bubble-visible");
     }
-    // True while the pointer isn't meaningfully moving the sprite. Shared by the held escape watch and releaseWalker's set-down-vs-flick decision.
+    // True while the pointer isn't meaningfully moving the sprite. Shared by the held escape watch and release's set-down-vs-flick decision.
     isPointerStill() {
         const T = tuning();
         return (performance.now() - this.lastMoveT > T.walkMaxFrame)
@@ -1165,11 +1169,11 @@ class Walker {
         this.actTimers.push(window.setTimeout(() => {
             if (this.mode !== MODE.HELD)
                 return;
-            // Wriggle free only if the pointer is still (same test releaseWalker uses).
+            // Wriggle free only if the pointer is still (same test release uses).
             if (this.isPointerStill())
                 playAnimation(this.imgEl, ANIM_BY_NAME[HOLD_SHAKES[0]], () => {
                     if (this.mode === MODE.HELD)
-                        this.releaseWalker();
+                        this.release();
                 });
             else
                 done();
@@ -1227,9 +1231,9 @@ class Walker {
     }
     // Place the body-level sidebar bubble against the sprite picture. It lives on <body> (like the comment feed) so no panel frame can clip it, which means its coordinates are viewport-relative and must be set here: centred on the picture, with the bubble's bottom edge sitting on the picture's top edge (its tail then points down onto the sprite). No-op for the floor bubble (no anchor): CSS positions that one absolutely in its own wrap.
     positionBubble() {
-        if (!this.bubbleAnchor)
+        if (!this.bubbleAnchorEl)
             return;
-        const r = this.bubbleAnchor.getBoundingClientRect();
+        const r = this.bubbleAnchorEl.getBoundingClientRect();
         this.bubbleEl.style.left = (r.left + r.width / 2) + "px";
         this.bubbleEl.style.bottom = (activeWindow.innerHeight - r.top) + "px";
     }
@@ -1257,9 +1261,10 @@ class Walker {
         this.imgEl.classList.remove("cc-dragging");
     }
     // The universal set-down: end the carry, resolve the release velocity, hand the landing bounce (and any flick) to the loop. isPointerStill tells a set-down (zero flickVel) from a flick (flickVel is stale when the pointer is held still).
-    releaseWalker() {
+    release() {
         this.endDrag();
-        this.setEasing(false);
+        // DROP takes the wrap loop-driven, so end any in-flight lift glide (a quick flick can release inside grab's ease) instead of leaving its timer pending.
+        this.endEase();
         this.phase = 0;
         if (this.isPointerStill())
             this.flickVel = 0;
@@ -1337,7 +1342,7 @@ class Walker {
         if (this.mode !== MODE.HELD)
             return;
         if (moved) {
-            this.releaseWalker();
+            this.release();
             return;
         }
         this.tapOrReact();
@@ -1352,7 +1357,7 @@ class Walker {
         else {
             this.lastTapT = now;
             if (this.grabbable)
-                this.releaseWalker();
+                this.release();
         }
     }
     onCancel(e) {
@@ -1362,7 +1367,7 @@ class Walker {
         this.pointerId = null;
         this.pressMoved = false;
         if (this.mode === MODE.HELD)
-            this.releaseWalker();
+            this.release();
     }
     // Stop every timer and remove the element. Layering eviction is the stage's job.
     destroy() {
@@ -1484,7 +1489,7 @@ class CompanionStage {
                 w.urlSig = sig;
                 w.spriteUrls = urls;
                 if (!urls.includes(w.imgEl.src))
-                    w.imgEl.src = w.bag.next(urls);
+                    w.imgEl.src = w.spriteBag.next(urls);
             }
         }
         // Re-deal stacking depth only on a cast change, so a slider tweak doesn't reshuffle who's in front.
@@ -2564,7 +2569,7 @@ class CompanionView extends ItemView {
         // Bubble lives on <body> (same level as the comment feed), NOT inside the panel, so the workspace-leaf frame can never clip it — it stays fully visible even past the panel edge. Being off-panel, root.empty() can't reap it, so cleanupWalker removes it. The walker positions it against the sprite picture (`sprite`) each time it speaks; the view re-runs that on resize/layout-change while it's up.
         const bubble = activeDocument.body.createDiv({ cls: "cc-bubble" });
         this.floatBubble = bubble;
-        this.walker = new Walker(null, this.plugin, character, { wrapEl: spriteWrap, imgEl: sprite, bubbleEl: bubble, bubbleAnchor: sprite }, urls, 0);
+        this.walker = new Walker(null, this.plugin, character, { wrapEl: spriteWrap, imgEl: sprite, bubbleEl: bubble, bubbleAnchorEl: sprite }, urls, 0);
         // The livestream overlay sits on the anchor, above the sprite (syncAesthetics gates it).
         this.buildAesthetics(anchor);
     }
