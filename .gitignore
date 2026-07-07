@@ -1,0 +1,20 @@
+# Personal vault content — your own characters / comments / mail / settings.
+data.json
+character-data.json
+stream-data.json
+mail-data.json
+blog-data.json
+oracle-data.json
+CLAUDE.md
+
+# Corruption backups written by readJsonFile
+*.bak
+
+# Build artifact — shipped via GitHub releases, not the repo
+main.js
+
+# Node
+node_modules/
+
+# Misc
+tools/
