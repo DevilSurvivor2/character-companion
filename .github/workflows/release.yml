@@ -1,0 +1,40 @@
+name: Release Obsidian plugin
+
+# Fires when you push a version tag (e.g. `git push origin 0.1.1`).
+# The tag MUST equal the manifest.json "version" exactly — no leading "v" —
+# because that is what Obsidian's community index looks up.
+on:
+  push:
+    tags:
+      - "*"
+
+# The build needs to create a release and upload assets to it.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+
+      - name: Install dependencies and build main.js
+        run: |
+          npm ci
+          npm run build
+
+      - name: Create the GitHub release with the three plugin files
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          gh release create "$tag" \
+            --title="$tag" \
+            --draft \
+            main.js manifest.json styles.css
