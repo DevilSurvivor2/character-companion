@@ -238,67 +238,67 @@
 }
 
 /* Frame: camcorder HUD above the sprite — corner brackets, blinking red dot, "REC" label. */
-.cc-anchor.cc-fx-rec {
-    --cc-fx-rec-layers: 6;
-    --cc-fx-rec-arm: 26px;
-    --cc-fx-rec-thick: 3px;
-    --cc-fx-rec-edge: 8px;
-    --cc-fx-rec-radius: 10px;
-    --cc-fx-rec-col: rgba(255, 255, 255, 0.3);
+.cc-anchor.cc-fx-frame {
+    --cc-fx-frame-layers: 6;
+    --cc-fx-frame-arm: 26px;
+    --cc-fx-frame-thick: 3px;
+    --cc-fx-frame-edge: 8px;
+    --cc-fx-frame-radius: 10px;
+    --cc-fx-frame-col: rgba(255, 255, 255, 0.3);
 }
-.cc-fx-rec-layer {
+.cc-fx-frame-layer {
     z-index: 7;
 }
-.cc-fx-rec-layer-0,
-.cc-fx-rec-layer-1,
-.cc-fx-rec-layer-2,
-.cc-fx-rec-layer-3,
-.cc-fx-rec-layer-5 {
+.cc-fx-frame-layer-0,
+.cc-fx-frame-layer-1,
+.cc-fx-frame-layer-2,
+.cc-fx-frame-layer-3,
+.cc-fx-frame-layer-5 {
     filter: 
         drop-shadow(0 0 5px var(--background-primary)) 
         drop-shadow(0 0 2px var(--background-primary));
 }
 
 /* Corner brackets (layers 0..3): a box with two borders, rounded on its corner. */
-.cc-fx-rec-layer-0,
-.cc-fx-rec-layer-1,
-.cc-fx-rec-layer-2,
-.cc-fx-rec-layer-3 {
+.cc-fx-frame-layer-0,
+.cc-fx-frame-layer-1,
+.cc-fx-frame-layer-2,
+.cc-fx-frame-layer-3 {
     inset: auto;
-    width: var(--cc-fx-rec-arm);
-    height: var(--cc-fx-rec-arm);
-    border: 0 solid var(--cc-fx-rec-col);
+    width: var(--cc-fx-frame-arm);
+    height: var(--cc-fx-frame-arm);
+    border: 0 solid var(--cc-fx-frame-col);
 }
-.cc-fx-rec-layer-0 { /* top-left */
-    top: var(--cc-fx-rec-edge);
-    left: var(--cc-fx-rec-edge);
-    border-top-width: var(--cc-fx-rec-thick);
-    border-left-width: var(--cc-fx-rec-thick);
-    border-top-left-radius: var(--cc-fx-rec-radius);
+.cc-fx-frame-layer-0 { /* top-left */
+    top: var(--cc-fx-frame-edge);
+    left: var(--cc-fx-frame-edge);
+    border-top-width: var(--cc-fx-frame-thick);
+    border-left-width: var(--cc-fx-frame-thick);
+    border-top-left-radius: var(--cc-fx-frame-radius);
 }
-.cc-fx-rec-layer-1 { /* top-right */
-    top: var(--cc-fx-rec-edge);
-    right: var(--cc-fx-rec-edge);
-    border-top-width: var(--cc-fx-rec-thick);
-    border-right-width: var(--cc-fx-rec-thick);
-    border-top-right-radius: var(--cc-fx-rec-radius);
+.cc-fx-frame-layer-1 { /* top-right */
+    top: var(--cc-fx-frame-edge);
+    right: var(--cc-fx-frame-edge);
+    border-top-width: var(--cc-fx-frame-thick);
+    border-right-width: var(--cc-fx-frame-thick);
+    border-top-right-radius: var(--cc-fx-frame-radius);
 }
-.cc-fx-rec-layer-2 { /* bottom-left */
-    bottom: var(--cc-fx-rec-edge);
-    left: var(--cc-fx-rec-edge);
-    border-bottom-width: var(--cc-fx-rec-thick);
-    border-left-width: var(--cc-fx-rec-thick);
-    border-bottom-left-radius: var(--cc-fx-rec-radius);
+.cc-fx-frame-layer-2 { /* bottom-left */
+    bottom: var(--cc-fx-frame-edge);
+    left: var(--cc-fx-frame-edge);
+    border-bottom-width: var(--cc-fx-frame-thick);
+    border-left-width: var(--cc-fx-frame-thick);
+    border-bottom-left-radius: var(--cc-fx-frame-radius);
 }
-.cc-fx-rec-layer-3 { /* bottom-right */
-    bottom: var(--cc-fx-rec-edge);
-    right: var(--cc-fx-rec-edge);
-    border-bottom-width: var(--cc-fx-rec-thick);
-    border-right-width: var(--cc-fx-rec-thick);
-    border-bottom-right-radius: var(--cc-fx-rec-radius);
+.cc-fx-frame-layer-3 { /* bottom-right */
+    bottom: var(--cc-fx-frame-edge);
+    right: var(--cc-fx-frame-edge);
+    border-bottom-width: var(--cc-fx-frame-thick);
+    border-right-width: var(--cc-fx-frame-thick);
+    border-bottom-right-radius: var(--cc-fx-frame-radius);
 }
 /* Blinking red dot (layer 4) + static "REC" label (layer 5). */
-.cc-fx-rec-layer-4 {
+.cc-fx-frame-layer-4 {
     inset: auto;
     top: 22px;
     right: 60px;
@@ -311,9 +311,9 @@
         drop-shadow(0 0 3px rgba(255, 45, 45, 0.7))
         drop-shadow(0 0 5px rgba(255, 45, 45, 0.5))
         drop-shadow(0 0 2px var(--background-primary));
-    animation: cc-fx-rec-blink 1.1s steps(1, end) infinite;
+    animation: cc-fx-frame-blink 1.1s steps(1, end) infinite;
 }
-.cc-fx-rec-layer-5 {
+.cc-fx-frame-layer-5 {
     inset: auto;
     top: 21px;
     right: 22px;
@@ -321,10 +321,10 @@
     font: 700 15px/1 var(--font-monospace, ui-monospace, monospace);
     letter-spacing: 1.5px;
 }
-.cc-fx-rec-layer-5::before {
+.cc-fx-frame-layer-5::before {
     content: "REC";
 }
-@keyframes cc-fx-rec-blink {
+@keyframes cc-fx-frame-blink {
     0%, 50% { opacity: 1; }
     50.01%, 100% { opacity: 0; }
 }

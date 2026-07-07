@@ -115,7 +115,7 @@ This plugin bundles three self-contained language engines. They are compiled int
 | [compromise](https://github.com/spencermountain/compromise) |Spencer Kelly|MIT|
 | [whichx](https://github.com/rudikershaw/whichx) |Rudi Kershaw|MIT|
 
-Because RiTa is GPL-3.0, this plugin is also distributed under the GPL-3.0 (see [LICENSE](LICENSE)). Anyone is free to use, study, modify, and redistribute it. Any redistributed versions must also be GPL-3.0.
+Because RiTa is GPL-3.0, this plugin is also distributed under the GPL-3.0 (see [LICENSE](LICENSE)). Anyone is free to use, study, modify, and redistribute it under GPL-3.0.
 
 ## Acknowledgements
 

@@ -71,7 +71,7 @@ const CLEARABLE = ANIMATIONS.map((a) => "cc-anim-" + a.name);
 // Per-character boolean toggles, shown as icon buttons in the editor's Name row. Add one: append a row (key, lucide icon, tooltip) — editor + loadSettings derive from it.
 const CHARACTER_TOGGLES = [
     { key: "curious", icon: "goal", label: "Curious: walk toward the cursor instead of fleeing" },
-    { key: "assert", icon: "crown", label: "Assert: push a resting chara aside instead of yielding" },
+    { key: "assert", icon: "crown", label: "Assert: push a resting character aside instead of yielding" },
     { key: "escape", icon: "door-open", label: "Escape: wriggle free when held still" },
 ];
 // Sidebar-panel action buttons (vertical icon column down the right edge). Add a row: `run(view)` is the click, optional `active(view)` lights it as a toggle.
@@ -108,7 +108,7 @@ const FEED_SOURCES = [
 const SPECIAL_EFFECTS = [
     { key: "retro", label: "Retro" },
     { key: "gradient", label: "Gradient" },
-    { key: "rec", label: "Frame" },
+    { key: "frame", label: "Frame" },
     { key: "firefly", label: "Fireflies" },
     { key: "square", label: "Squares" },
     { key: "rain", label: "Rain" },
@@ -340,14 +340,14 @@ const DATA_FILES = [
 const DATA_FILE_BY_PROP = Object.fromEntries(DATA_FILES.map((d) => [d.prop, d]));
 const DEFAULT_SETTINGS = {
     // Characters (the bulky array) + the active-character pointer live in character-data.json, not here — see the DATA_FILES table. data.json holds only the light "bones": scalars + the animation/effect/aesthetic enable maps.
-    sideSpriteMaxHeight: 300,
+    sidebarSpriteMaxHeight: 300,
     rootSpriteMaxHeight: 150,
     rootWalkSpeed: 20,
     quoteDurationMs: 5000,
     surpriseChance: 20,
     animateOnQuote: true,
     idleEnabled: true,
-    idleChatterChance: 25,
+    chatterChance: 25,
     sleepAfterMs: 120000,
     // ---- stream mode (sidebar panel) ----
     streamEnabled: false,
@@ -1206,11 +1206,11 @@ class Walker {
             return;
         }
         const s = this.settings;
-        const canSpeak = this.character.quotes.length > 0 && s.idleChatterChance > 0;
+        const canSpeak = this.character.quotes.length > 0 && s.chatterChance > 0;
         const canMove = s.idleEnabled;
         if (!canSpeak && !canMove)
             return;
-        if (canSpeak && (!canMove || Math.random() * 100 < s.idleChatterChance)) {
+        if (canSpeak && (!canMove || Math.random() * 100 < s.chatterChance)) {
             this.speak();
             return;
         }
@@ -2561,7 +2561,7 @@ class CompanionView extends ItemView {
             return;
         }
         // Sprite height caps the image and sets the bubble's resting height, so it lives on the root for both to inherit.
-        root.setCssProps({ "--cc-sprite-max-height": String(this.settings.sideSpriteMaxHeight) });
+        root.setCssProps({ "--cc-sprite-max-height": String(this.settings.sidebarSpriteMaxHeight) });
         // The anchor fills the panel and clips the sprite so an idle stroll can walk off one edge and back without the off-screen jump showing.
         const anchor = root.createDiv({ cls: "cc-anchor" });
         const spriteWrap = anchor.createDiv({ cls: "cc-sprite-wrap" });
@@ -2775,23 +2775,23 @@ class ListEditor {
 // Enable-pill grids: one row each. entries(t) builds pills; save(t) overrides default saveSettings for per-file lists.
 const PILL_GRIDS = {
     root: {
-        grid: "rootGridEl", empty: "No characters yet. Add one in the Character tab.",
+        grid: "rootGridEl", empty: "No characters yet. Add one in the Cast tab.",
         entries: (t) => t.charPills((c) => c.rootEnabled, (c, v) => { c.rootEnabled = v; }),
         save: (t) => t.plugin.saveDataFile("characterData"),
     },
     sidebar: {
-        grid: "sidebarGridEl", empty: "No characters yet. Add one in the Character tab.",
+        grid: "sidebarGridEl", empty: "No characters yet. Add one in the Cast tab.",
         entries: (t) => t.charPills((c) => c.sidebarEnabled, (c, v) => { c.sidebarEnabled = v; }),
         // Rerender so the open panel reflects a newly included / excluded character at once.
         save: (t) => t.plugin.saveDataFile("characterData", true),
     },
     commentSet: {
-        grid: "commentSetGridEl", empty: "No comment sets yet. Add one in the Comment tab.",
+        grid: "commentSetGridEl", empty: "No comment sets yet. Add one in the Chat tab.",
         entries: (t) => t.enablePills(t.plugin.streamData.commentSets),
         save: (t) => t.plugin.saveDataFile("streamData"),
     },
     vip: {
-        grid: "vipGridEl", empty: "No patrons yet. Add one in the Patron tab.",
+        grid: "vipGridEl", empty: "No patrons yet. Add one in the VIP tab.",
         entries: (t) => t.enablePills(t.plugin.oracleData.vips),
         save: (t) => t.plugin.saveDataFile("oracleData"), // the oracle-data save retrains every open view's classifier
     },
@@ -2881,7 +2881,7 @@ class CompanionSettingTab extends PluginSettingTab {
         // An `icon` marks a list-editor page (Character/Comment/Patron/Inbox): the tab bar renders it icon-only, expanding to icon+label only while active (see display()).
         this.tabs = [
             { id: "behavior", label: "Behavior", render: (c) => this.renderBehaviorTab(c) },
-            { id: "character", label: "Chara", icon: "user-round", render: (c) => this.renderCharacterTab(c) },
+            { id: "character", label: "Cast", icon: "user-round", render: (c) => this.renderCastTab(c) },
             { id: "display", label: "Display", render: (c) => this.renderDisplayTab(c) },
             { id: "stream", label: "Stream", render: (c) => this.renderStreamTab(c) },
             { id: "comment", label: "Chat", icon: "message-circle-more", render: (c) => this.renderCommentTab(c) },
@@ -3075,11 +3075,11 @@ class CompanionSettingTab extends PluginSettingTab {
             set: (v) => (this.plugin.settings.idleEnabled = v),
         });
         this.addSliderSetting(c, {
-            name: "Idle quote chance", unit: "%",
+            name: "Chatter chance", unit: "%",
             desc: "How often an idle moment triggers a quote instead of a movement. 0 = never speak on its own.",
             min: 0, max: 100, step: 5,
-            get: () => this.plugin.settings.idleChatterChance,
-            set: (v) => (this.plugin.settings.idleChatterChance = v),
+            get: () => this.plugin.settings.chatterChance,
+            set: (v) => (this.plugin.settings.chatterChance = v),
         });
         this.addMsSliderSetting(c, {
             name: "Sleep after",
@@ -3117,8 +3117,8 @@ class CompanionSettingTab extends PluginSettingTab {
             name: "Sprite max height", unit: "px",
             desc: "Width scales to match.",
             min: 100, max: 500, step: 20,
-            get: () => this.plugin.settings.sideSpriteMaxHeight,
-            set: (v) => (this.plugin.settings.sideSpriteMaxHeight = v),
+            get: () => this.plugin.settings.sidebarSpriteMaxHeight,
+            set: (v) => (this.plugin.settings.sidebarSpriteMaxHeight = v),
             rerender: true,
         });
         this.addMsSliderSetting(c, {
@@ -3151,7 +3151,7 @@ class CompanionSettingTab extends PluginSettingTab {
             .setDesc("Click a name to show or hide it walking along the bottom of the window. Dimmed means off. Hide them all to disable this feature entirely.");
         this.mountPillGrid(c, "root");
     }
-    renderCharacterTab(c) {
+    renderCastTab(c) {
         new Setting(c).setName("Character list").setHeading();
         this.charEditor.mount(c);
     }
@@ -3194,8 +3194,8 @@ class CompanionSettingTab extends PluginSettingTab {
             set: (v) => (this.plugin.settings.streamHistoryCount = v),
         });
         new Setting(c)
-            .setName("Comment sets in stream")
-            .setDesc("Click a comment set to include or exclude it in stream mode. Dimmed means off. Edit comment sets in the Chat tab.");
+            .setName("Comment sets")
+            .setDesc("Click a comment set to include or exclude it. Dimmed means off. Edit comment sets in the Chat tab.");
         this.mountPillGrid(c, "commentSet");
         new Setting(c).setName("Miscellaneous").setHeading();
         this.addTextSetting(c, {
@@ -3228,7 +3228,7 @@ class CompanionSettingTab extends PluginSettingTab {
         this.tabIntro(c, "The divine broadcasting that sometimes reacts to what you've just typed.");
         new Setting(c).setName("Oracle mode").setHeading();
         this.addTextSetting(c, {
-            name: "System name",
+            name: "System title",
             desc: 'The channel brand, used as $system. Blank falls back to "' + ORACLE_SYS_FALLBACK + '".',
             placeholder: ORACLE_SYS_FALLBACK,
             get: () => this.plugin.settings.oracleSystemName,
@@ -3236,7 +3236,7 @@ class CompanionSettingTab extends PluginSettingTab {
         });
         this.addTextSetting(c, {
             name: "Patron origin",
-            desc: 'The patron species or status, used as $patron. Comma-separate several to draw one at random each time (e.g. "Demon, Angel"). Give a custom plural in brackets (e.g. "Persona (Personae)"). Blank falls back to "' + ORACLE_PATRON_FALLBACK + '".',
+            desc: 'The audience species or status, used as $patron. Comma-separate several to draw one at random each time (e.g. "Demon, Angel"). Give a custom plural in brackets (e.g. "Persona (Personae)"). Blank falls back to "' + ORACLE_PATRON_FALLBACK + '".',
             placeholder: ORACLE_PATRON_FALLBACK,
             get: () => this.plugin.settings.oraclePatronName,
             set: (v) => (this.plugin.settings.oraclePatronName = v),
@@ -3258,8 +3258,8 @@ class CompanionSettingTab extends PluginSettingTab {
         });
         const saveOracle = () => this.plugin.saveDataFile("oracleData");
         new Setting(c)
-            .setName("Patrons")
-            .setDesc("Click a patron to enable or disable it in oracle mode. Dimmed means off. Edit patrons in the VIP tab.");
+            .setName("Patrons in oracle")
+            .setDesc("Click a patron to enable or disable it. Dimmed means off. Edit patrons in the VIP tab.");
         this.mountPillGrid(c, "vip");
         new Setting(c).setName("Message list").setHeading();
         new Setting(c)
@@ -3318,7 +3318,7 @@ class CompanionSettingTab extends PluginSettingTab {
         });
         new Setting(box)
             .setName("Variables")
-            .setDesc("One variable per line. Format = \"variable: a, b, c\". $topic decides what this patron will react to when you're typing; allows both verbs and nouns; matches inflections automatically. Exclusive to this VIP.");
+            .setDesc("One variable per line. Format = \"variable: a, b, c\". $topic decides what this patron will react to when you're typing; allows both verbs and nouns; matches inflections automatically. Exclusive to this patron.");
         this.addMapTextarea(box, { get: () => vip.vars, set: (m) => (vip.vars = m), save });
         new Setting(box)
             .setName("Reactions")
@@ -3331,7 +3331,7 @@ class CompanionSettingTab extends PluginSettingTab {
     }
     // Mail mode's settings: the interval, which templates are enabled, and the shared constants any template can draw from. The templates themselves are edited on the Inbox tab.
     renderMailTab(c) {
-        this.tabIntro(c, "The e-mailing that directly address the character.");
+        this.tabIntro(c, "The period emailing that directly address the character.");
         new Setting(c).setName("Mail mode").setHeading();
         this.addMsRangeSetting(c, {
             name: "Mail interval",
@@ -3341,7 +3341,7 @@ class CompanionSettingTab extends PluginSettingTab {
         });
         new Setting(c)
             .setName("Mail templates")
-            .setDesc("Click a mail template to include or exclude it in mail mode. Dimmed means off. Edit mail templates in the Inbox tab.");
+            .setDesc("Click a mail template to include or exclude it. Dimmed means off. Edit mail templates in the Inbox tab.");
         this.mountPillGrid(c, "mail");
         this.addConstantsSection(c, {
             desc: "One constant per line. Format = \"constant: a, b, c\". Shared across all mail templates.",
