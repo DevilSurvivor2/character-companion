@@ -25,7 +25,7 @@
     --cc-flip-swap: 300ms;            /* when the image swap happens (hidden edge-on) */
     --cc-flip-cooldown: 12000ms;      /* min gap between two flips */
     --cc-walk-max-frame: 100ms;
-    --cc-react-radius: 120px;             /* cursor react: how near the cursor must be to steer a sprite (also a flee's run distance) */
+    --cc-react-radius: 160px;             /* cursor react: how near the cursor must be to steer a sprite (also a flee's run distance) */
     --cc-react-speed-mult: 2.2;           /* pace boost on a steered walk, flee and approach alike */
     --cc-curious-gap: 90px;               /* how near an approach parks to watch */
     --cc-curious-watch-min: 3000ms;       /* watch window before a curiosity-chatter roll */
@@ -507,7 +507,7 @@
     height: calc(var(--cc-sprite-max-height, 400) * 1px);
     overflow: visible;
     pointer-events: none;
-    z-index: calc(var(--layer-status-bar, 15) + 1);
+    z-index: calc(var(--layer-status-bar, 15) + 2);
 }
  
 /* The overlay ignores the pointer, but its sprites are grabbable. */
@@ -723,7 +723,7 @@ button:not(.clickable-icon).cc-tab-active {
    Bubbles stack away from the corner and fade in. */
 .cc-feed {
     position: fixed;
-    z-index: calc(var(--layer-status-bar, 15) + 2);
+    z-index: calc(var(--layer-status-bar, 15) + 1);
     display: flex;
     flex-direction: column;
     gap: 6px;
