@@ -697,7 +697,7 @@ function spriteTopInsetFraction(url) {
     _spriteInsetCache.set(url, p);
     return p;
 }
-// Split a quote into the sentences a walker reveals as consecutive bubbles (quoteTypewriter only). Hard breaks on . ! ?; an ellipsis (runs of 2+ dots normalised to … first) breaks only when the next word is capitalised, else stays attached. A merge pass folds runs shorter than --cc-quote-min-words words together, so a burst like "Whoa! Whoa! Whoa!" reads as one. Pure/static: unit-testable headless (pass an explicit min via mergeShortSentences).
+// Split a quote into the sentences a walker reveals as consecutive bubbles (quoteTypewriter only). Scans runs of terminators and closes a sentence only where terminatorBreaks says so. A merge pass folds runs shorter than --cc-quote-min-words words together, so a burst like "Whoa! Whoa! Whoa!" reads as one. Pure/static: unit-testable headless (pass an explicit min via mergeShortSentences).
 function splitQuote(text) {
     const s = (text || "").replace(/\.{2,}/g, "…").trim();
     if (!s)
@@ -708,15 +708,12 @@ function splitQuote(text) {
     let m;
     while ((m = re.exec(s))) {
         const end = m.index + m[0].length;
-        // The next word decides an ellipsis break: skip trailing space and one opening quote, then test for an uppercase letter (end-of-text counts as a break).
-        let j = end;
-        while (j < s.length && /\s/.test(s[j])) j++;
-        if (j < s.length && /['"“‘«(]/.test(s[j])) j++;
-        const nextCap = j >= s.length || /\p{Lu}/u.test(s[j]);
-        // ! ? and a lone period always close a sentence; an ellipsis run closes only before a capitalised word.
-        if (/[!?]/.test(m[0]) || !m[0].includes("…") || nextCap) {
-            frags.push(s.slice(start, end).trim());
-            start = end;
+        if (terminatorBreaks(s, m.index, m[0], end)) {
+            // Keep a closing quote/bracket sitting right on the terminator with its own sentence, so "hi." doesn't strand the " onto the next bubble.
+            let e = end;
+            while (e < s.length && /['"”’»)\]]/.test(s[e])) e++;
+            frags.push(s.slice(start, e).trim());
+            start = e;
         }
     }
     if (start < s.length) {
@@ -725,13 +722,45 @@ function splitQuote(text) {
     }
     return mergeShortSentences(frags, tuning().quoteMinWords);
 }
-// Fold fragments shorter than `min` words forward into the next, so no bubble is a stray one- or two-word burst; a leftover short tail attaches to the previous fragment.
+// Does the terminator run `run` at [i, end) close the current sentence? ! and ? always do. An ellipsis closes only as a *trailing* mark before a capitalised word. A lone period closes unless it is an abbreviation: an internal dot ("3.5", "google.com"), a known honorific ("Dr.", "Mr."), or an internal initialism dot ("U.S."). Sentence-ending initialisms ("U.F.O.") are allowed to break if followed by a new sentence.
+function terminatorBreaks(s, i, run, end) {
+    if (/[!?]/.test(run)) {
+        let j = end;
+        while (j < s.length && /['"“‘«)\]]/.test(s[j])) j++;
+        while (j < s.length && /\s/.test(s[j])) j++;
+        if (j < s.length && /\p{Ll}/u.test(s[j])) return false;
+        return true;
+    }
+    if (run.includes("…")) {
+        if (i === 0 || /\s/.test(s[i - 1])) return false;
+        let j = end;
+        while (j < s.length && /\s/.test(s[j])) j++;
+        while (j < s.length && s[j] === "…") { j++; while (j < s.length && /\s/.test(s[j])) j++; }
+        if (j < s.length && /['"“‘«(]/.test(s[j])) j++;
+        return j >= s.length || /\p{Lu}/u.test(s[j]);
+    }
+    if (/[\p{L}\p{N}]/u.test(s[end] || "")) return false;
+    const prevMatch = s.slice(0, i).match(/[\p{L}]+$/u);
+    const prevWord = prevMatch ? prevMatch[0] : "";
+    const abbreviations = new Set(["mr", "mrs", "ms", "mx", "dr", "prof", "rev", "capt", "gen", "col", "maj", "sgt", "st", "mt", "lt", "cmdr", "gov", "sen", "rep", "jr", "sr", "etc", "vs", "al", "approx", "ave", "blvd", "dept", "est", "inc", "misc"]);
+    if (abbreviations.has(prevWord.toLowerCase())) return false;
+    if (prevWord.length === 1) {
+        let j = end;
+        while (j < s.length && /\s/.test(s[j])) j++;
+        if (j < s.length && /['"“‘«(]/.test(s[j])) j++;    
+        if (/\p{Ll}/u.test(s[j] || "")) return false;
+        if (s.slice(j).match(/^\p{Lu}\./u)) return false;
+        return true;
+    }
+    return true;
+}
+// Fold fragments shorter than `min` words forward into the next, so no bubble is a stray one- or two-word burst; a leftover short tail attaches to the previous fragment. Exception: a fragment that trails off with a sentence-final … ("Hey…") is a deliberate beat, not a stray burst, so it always flushes on its own even when short.
 function mergeShortSentences(frags, min) {
     const out = [];
     let buf = "";
     for (const f of frags) {
         buf = buf ? buf + " " + f : f;
-        if (buf.split(/\s+/).filter(Boolean).length >= min) {
+        if (buf.split(/\s+/).filter(Boolean).length >= min || /…["'”’»)\]]*$/.test(buf)) {
             out.push(buf);
             buf = "";
         }
@@ -1361,7 +1390,7 @@ class Walker {
             start = end;
         }
     }
-    // Reveal `text` one char at a time (wrapped at the pre-measured `breaks`), calling done() when whole. The gap after a char lengthens on punctuation: end marks (. ! ? and a sentence-final …) add --cc-quote-pause-end, mid marks (, — and a mid-sentence …) add --cc-quote-pause-mid (half). A … is sentence-final when only whitespace follows it in this already-split sentence.
+    // Reveal `text` one char at a time (wrapped at the pre-measured `breaks`), calling done() when whole. The gap after a char lengthens on punctuation: end marks (. ! ? and a sentence-final …) add --cc-quote-pause-end, mid marks (, ; — and a mid-sentence …) add --cc-quote-pause-mid (half). A … is sentence-final when only whitespace follows it in this already-split sentence.
     typeOut(text, breaks, i, done) {
         this.renderReveal(text, breaks, i);
         if (i >= text.length) { done(); return; }
@@ -1372,7 +1401,7 @@ class Walker {
             delay += T.quotePauseEnd;
         else if (c === "…")
             delay += (text.slice(i).trim() === "" ? T.quotePauseEnd : T.quotePauseMid);
-        else if (c === "," || c === "—")
+        else if (c === "," || c === ";" || c === "—")
             delay += T.quotePauseMid;
         this.bubbleTimer = window.setTimeout(() => this.typeOut(text, breaks, i + 1, done), delay);
     }
@@ -1809,6 +1838,21 @@ class CompanionStage {
     }
 }
 /* ---------------- comment feed ---------------- */
+// Inline-span protocol: carries "this run is a styled <span>" through the plain-string pipeline (RiScript eval + emit's punctuation pass), which is why it's control chars in the text rather than a {cls,text} node — a wrapped run is FEED_SPAN cls FEED_SPAN_SEP text FEED_SPAN, both chars non-whitespace so emit's trim/regex leave them intact. feedSpan is the single producer, renderInline the single consumer; plain text splits to one verbatim run. Only the Oracle VIP beat wraps a run today (its quoted modifier).
+const FEED_SPAN = String.fromCharCode(0x1f);      // toggles a plain ↔ span run
+const FEED_SPAN_SEP = String.fromCharCode(0x1e);  // separates a run's class from its text
+// Wrap text so renderInline emits it inline as <span class=cls>; cls defaults to the emphasis modifier style.
+function feedSpan(text, cls = "cc-feed-modifier") {
+    return FEED_SPAN + cls + FEED_SPAN_SEP + text + FEED_SPAN;
+}
+function renderInline(el, text) {
+    String(text).split(FEED_SPAN).forEach((seg, i) => {
+        if (!seg) return;
+        if (!(i % 2)) return void el.appendText(seg);   // even segments are plain text
+        const sep = seg.indexOf(FEED_SPAN_SEP);
+        el.createSpan({ cls: seg.slice(0, sep), text: seg.slice(sep + 1) });
+    });
+}
 // Chat overlay: fixed element pinned to root-split corner nearest the panel. Owns no timer/content — exposes push() for independent sources. Newest at corner, older bump away.
 class CommentFeed {
     constructor(view) {
@@ -1868,7 +1912,7 @@ class CommentFeed {
             if (!first)
                 bubble.createEl("br");
             first = false;
-            bubble.createSpan(p.cls ? { cls: "cc-feed-part-" + p.cls, text: p.text } : { text: p.text });
+            renderInline(p.cls ? bubble.createSpan({ cls: "cc-feed-part-" + p.cls }) : bubble, p.text);
         }
         if (extraCls)
             bubble.classList.add(extraCls);
@@ -2175,8 +2219,9 @@ class Oracle {
         const patron = vip.origin || this.drawPatron().singular;
         // This VIP's variables ($verb/$manner/…) + per-line vars (frames also reach the shared constants/transforms via evaluate). Reused across sentences — evaluate never mutates it. `topic` is assigned AFTER choiceRules so the beat's chosen echo wins over the raw vars.topic choice-rule (which would otherwise re-pick per reference).
         const vipCtx = Object.assign(choiceRules(vip.vars), { patron, modifier: vip.modifier || vip.name, topic });
-        // Sentence 1 carries the prefix; follow-ups are bare asides (per the requested examples).
-        let line = this.evaluate('The $patron "$modifier" ' + (this.reactionBags[vip.name] ??= new Bag()).next(vip.reactions) + ".", vipCtx);
+        // Sentence 1 carries the prefix; follow-ups are bare asides (per the requested examples). Patron and modifier are already resolved plain strings, so the prefix is built in JS with the quoted modifier wrapped by feedSpan (rendered as .cc-feed-modifier); only the reaction needs the engine. They stay in vipCtx too, so a reaction that references $patron/$modifier still resolves.
+        const reaction = this.evaluate((this.reactionBags[vip.name] ??= new Bag()).next(vip.reactions), vipCtx);
+        let line = `The ${patron} ${feedSpan(`"${vipCtx.modifier}"`)} ${reaction}.`;
         if (vip.asides.length) {
             const r = Math.random(), t = tuning();
             const aside = () => " " + this.evaluate((this.asideBags[vip.name] ??= new Bag()).next(vip.asides), vipCtx);

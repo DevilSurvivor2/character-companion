@@ -795,6 +795,11 @@ button:not(.clickable-icon).cc-tab-active {
     border-color: var(--interactive-accent);
     color: var(--text-normal);
 }
+/* Inline-highlighted run inside a bubble (currently the VIP's quoted patron modifier). Restyle freely — weight/colour/etc. */
+.cc-feed-modifier {
+    font-weight: 600;
+    color: var(--interactive-accent);
+}
 
 /* Mail mode: multi-part bubble (title/from/to/content). */
 .cc-feed-bubble-mail {
