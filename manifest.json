@@ -1,7 +1,7 @@
 {
 	"id": "character-companion",
 	"name": "Character Companion",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"minAppVersion": "1.4.0",
 	"description": "Shows animated character sprites living in the side panel and walking along the bottom edge, with click animations, speech bubbles, and an optional reactive comment feed.",
 	"author": "DevilSurvivor2",

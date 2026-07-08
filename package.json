@@ -1,6 +1,6 @@
 {
   "name": "character-companion",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Animated character companion for Obsidian.",
   "main": "main.js",
   "scripts": {
