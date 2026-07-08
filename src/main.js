@@ -343,7 +343,7 @@ const DEFAULT_SETTINGS = {
     rootSpriteMaxHeight: 150,
     rootWalkSpeed: 20,
     quoteDurationMs: 3000,
-    quoteTypewriter: false,   // on: reveal quotes sentence-by-sentence, typewriter-style; off: whole line at once
+    quoteTypewriter: "off",   // "off": whole line at once; "slow"/"fast": reveal sentence-by-sentence, typewriter-style, at the matching --cc-quote-type-speed-* gap
     surpriseChance: 20,
     animateOnQuote: true,
     idleEnabled: true,
@@ -1290,14 +1290,14 @@ class Walker {
         if (name)
             this.beginAnim(ANIM_BY_NAME[name], true);
     }
-    // Speak one of the character's lines through the one bubble. With quoteTypewriter on, split into sentences typed out consecutively (the CommentFeed "push a part" idea, but sequential — one held at a time, not stacked); off, the whole line is one chunk shown at once. No-op with no bubble/nothing to say; a blank/punctuation-only line yields no chunks and is skipped.
+    // Speak one of the character's lines through the one bubble. With quoteTypewriter "slow"/"fast", split into sentences typed out consecutively (the CommentFeed "push a part" idea, but sequential — one held at a time, not stacked); "off", the whole line is one chunk shown at once. No-op with no bubble/nothing to say; a blank/punctuation-only line yields no chunks and is skipped.
     speak() {
         const quotes = this.character.quotes;
         if (!this.bubbleEl || quotes.length === 0)
             return;
         this.clearBubbleTimer();
         const line = this.quoteBag.next(quotes);
-        const chunks = this.settings.quoteTypewriter ? splitQuote(line) : [line.trim()].filter(Boolean);
+        const chunks = this.settings.quoteTypewriter !== "off" ? splitQuote(line) : [line.trim()].filter(Boolean);
         if (chunks.length === 0)
             return;
         this.positionBubble();
@@ -1314,7 +1314,7 @@ class Walker {
                     this.bubbleEl.removeClass("cc-bubble-visible");
             }, this.quoteHoldMs(chunks[idx]));
         };
-        if (this.settings.quoteTypewriter)
+        if (this.settings.quoteTypewriter !== "off")
             this.typeOut(chunks[idx], this.wrapBreaks(chunks[idx]), 0, hold);
         else { this.bubbleEl.setText(chunks[idx]); hold(); }
     }
@@ -1366,7 +1366,7 @@ class Walker {
         this.renderReveal(text, breaks, i);
         if (i >= text.length) { done(); return; }
         const T = tuning();
-        let delay = T.quoteTypeSpeed;
+        let delay = this.settings.quoteTypewriter === "fast" ? T.quoteTypeSpeedFast : T.quoteTypeSpeedSlow;
         const c = i > 0 ? text[i - 1] : "";
         if (/[.!?]/.test(c))
             delay += T.quotePauseEnd;
@@ -2958,7 +2958,7 @@ const PILL_GRIDS = {
         entries: (t) => t.flagPills(AESTHETICS, t.plugin.settings.enabledAesthetics),
     },
 };
-// The settings tab, split into pages: Behavior, Character, Display, Stream, Comment, Oracle, Patron.
+// The settings tab: a tab bar over pages, each page a row in the tab table (this.tabs) below.
 class CompanionSettingTab extends PluginSettingTab {
     constructor(app, plugin) {
         super(app, plugin);
@@ -3045,7 +3045,7 @@ class CompanionSettingTab extends PluginSettingTab {
         return save ? save() : this.plugin.saveSettings(rerender);
     }
     // One slider setting: a native ".slider" over [min, max] stepped by step, with the live value shown to its LEFT (mirrors the dual-range row) and the unit carried in the name's brackets. get()/set() read/write the stored value; the ms sibling passes format/parse for the stored↔display conversion (identity here).
-    addSliderSetting(container, { name, desc, unit, get, set, min, max, step, save, rerender = false, format = (v) => v, parse = (v) => v }) {
+    addSliderSetting(container, { name, desc, unit, get, set, min, max, step, save, rerender = false, format = (v) => v, parse = (v) => v, readout = (v) => String(v) }) {
         const setting = new Setting(container).setName(unit ? name + " (" + unit + ")" : name);
         if (desc)
             setting.setDesc(desc);
@@ -3053,7 +3053,7 @@ class CompanionSettingTab extends PluginSettingTab {
         const label = wrap.createSpan({ cls: "cc-range-label" });
         const attr = { type: "range", min: String(min), max: String(max), step: String(step), "data-ignore-swipe": "true" };
         const slider = wrap.createEl("input", { cls: "slider cc-single-slider", attr });
-        const paint = () => label.setText(String(slider.value));
+        const paint = () => label.setText(readout(Number(slider.value)));
         slider.value = String(format(get()));
         paint();
         // Live-paint the readout per tick; persist (and possibly re-render the open panel) only when the drag ends — same rationale as addTextSetting's change-not-keystroke commit.
@@ -3274,11 +3274,18 @@ class CompanionSettingTab extends PluginSettingTab {
             unit: "sec", min: 1, max: 5,
             key: "quoteDurationMs",
         });
-        this.addToggleSetting(c, {
+        // Off / Slow / Fast three-step slider. Stored as the "off"/"slow"/"fast" string; the slider works in 0–2 indices, so format/parse map the string↔index and readout shows the label.
+        const typewriterSteps = ["off", "slow", "fast"];
+        const typewriterLabels = ["Off", "Slow", "Fast"];
+        this.addSliderSetting(c, {
             name: "Quote typewriter",
-            desc: "On reveals a quote sentence by sentence, typewriter-style. Off shows the whole line at once.",
+            desc: "Off shows the whole line at once. Slow and Fast reveal it sentence by sentence, typewriter-style, at their own per-character speed.",
+            min: 0, max: 2, step: 1,
             get: () => this.plugin.settings.quoteTypewriter,
             set: (v) => (this.plugin.settings.quoteTypewriter = v),
+            format: (v) => Math.max(0, typewriterSteps.indexOf(v)),
+            parse: (n) => typewriterSteps[n],
+            readout: (n) => typewriterLabels[n],
         });
         new Setting(c)
             .setName("Characters in sidebar")
@@ -3877,6 +3884,9 @@ class CharacterCompanionPlugin extends Plugin {
             if (loaded[k] !== undefined)
                 s[k] = loaded[k];
         }
+        // Migrate the pre-tri-state quoteTypewriter boolean (true=typed, false=whole line) to the "off"/"slow"/"fast" string.
+        if (typeof s.quoteTypewriter === "boolean")
+            s.quoteTypewriter = s.quoteTypewriter ? "slow" : "off";
         // Re-normalise each enable map per its FLAG_MAPS row: keep known flags, default new names.
         for (const [key, names, def] of FLAG_MAPS)
             s[key] = boolMap(names, loaded[key], def);

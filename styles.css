@@ -51,8 +51,9 @@
     --cc-bubble-inset-alpha: 0.05;
     --cc-bubble-max-width: 220;   /* px cap on bubble width (both surfaces); also the "full line" reference JS scales the hold time against */
 
-    /* Quote typewriter (quoteTypewriter on): the bubble types its line out one char at a time, then holds for the quote-duration setting before the next sentence. --cc-quote-type-speed is the per-char gap; after punctuation it lengthens — end marks (. ! ? and a sentence-final …) pause --cc-quote-pause-end, mid marks (, — and a mid-sentence …) pause half that. A line is split into sentences first; runs shorter than --cc-quote-min-words words merge so no bubble is a lone one-word burst. */
-    --cc-quote-type-speed: 30ms;
+    /* Quote typewriter (quoteTypewriter "slow"/"fast"): the bubble types its line out one char at a time, then holds for the quote-duration setting before the next sentence. --cc-quote-type-speed-slow / -fast are the two selectable per-char gaps (the setting picks one; "off" skips typing entirely); after punctuation whichever is chosen lengthens — end marks (. ! ? and a sentence-final …) pause --cc-quote-pause-end, mid marks (, — and a mid-sentence …) pause half that. A line is split into sentences first; runs shorter than --cc-quote-min-words words merge so no bubble is a lone one-word burst. */
+    --cc-quote-type-speed-slow: 45ms;
+    --cc-quote-type-speed-fast: 16ms;
     --cc-quote-pause-mid: 180ms;
     --cc-quote-pause-end: 360ms;
     --cc-quote-min-words: 3;
@@ -723,7 +724,7 @@ button:not(.clickable-icon).cc-tab-active {
     pointer-events: auto;
 }
 
-/* Stream comment feed: fixed overlay pinned to the root-split corner nearest the panel. Bubbles stack away from the corner and fade in. */
+/* Feed overlay: fixed, pinned to the root-split corner nearest the panel. Bubbles stack away from the corner and fade in. */
 .cc-feed {
     position: fixed;
     z-index: calc(var(--layer-status-bar, 15) + 1);
@@ -783,7 +784,7 @@ button:not(.clickable-icon).cc-tab-active {
     backdrop-filter: blur(10px);
 }
 
-/* Oracle message types — distinguished by style, not text brackets. SYSTEM: muted. ANON: muted italic. VIP: accent border. */
+/* Oracle message types — distinguished by style, not text brackets. SYSTEM: faint. ANON: muted. VIP: accent border. */
 .cc-feed-bubble-sys {
     color: var(--text-faint);
 }
