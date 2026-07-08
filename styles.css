@@ -41,15 +41,27 @@
     --cc-tickle-reversals: 4;
     --cc-ease: 180ms;
  
-    /* Vertical model: at rest a sprite sits --cc-rest-down (3% of its height) below the floor,
-       hiding the knee-crop. Upward motion is capped at this value (translateY: -3%);
-       more travel dips first (positive translateY) and rises back. */
+    /* Vertical model: at rest a sprite sits --cc-rest-down (3% of its height) below the floor, hiding the knee-crop. Upward motion is capped at this value (translateY: -3%); more travel dips first (positive translateY) and rises back. */
     --cc-rest-down: 3%;
     --cc-walk-rest-y: 3;   /* walk arc: rest, 3% below floor */
     --cc-walk-lift-y: 0;   /* walk arc: peak, level with the floor */
 
-    /* Stream aesthetics: viewer-count drift + heart/emoji particle ranges.
-       Heart/emoji durations are seconds; everything else carries its unit. */
+    /* Speech bubble anchoring: float the bubble above the sprite's top-most coloured pixel rather than the empty image-box top. --cc-bubble-gap is the float distance as a unitless FRACTION of the surface's sprite max-height, so root and sidebar (different heights) get a proportional gap instead of one fixed px looking huge on the short one. --cc-bubble-inset is the measured transparent-top height in rendered px (set per-walker by JS; 0 until measured). A row counts as coloured once any pixel's alpha exceeds --cc-bubble-inset-alpha (0–1). */
+    --cc-bubble-gap: 0.1;
+    --cc-bubble-inset-alpha: 0.05;
+    --cc-bubble-max-width: 220;   /* px cap on bubble width (both surfaces); also the "full line" reference JS scales the hold time against */
+
+    /* Quote typewriter (quoteTypewriter on): the bubble types its line out one char at a time, then holds for the quote-duration setting before the next sentence. --cc-quote-type-speed is the per-char gap; after punctuation it lengthens — end marks (. ! ? and a sentence-final …) pause --cc-quote-pause-end, mid marks (, — and a mid-sentence …) pause half that. A line is split into sentences first; runs shorter than --cc-quote-min-words words merge so no bubble is a lone one-word burst. */
+    --cc-quote-type-speed: 30ms;
+    --cc-quote-pause-mid: 180ms;
+    --cc-quote-pause-end: 360ms;
+    --cc-quote-min-words: 3;
+
+    /* Bubble hold time scales with content length rather than being flat: the quote-duration SETTING is spent over exactly one full line, so a line filling --cc-bubble-max-width holds for it, shorter lines clear sooner, and a wrapped multi-line line lingers proportionally longer. --cc-quote-char-em (avg glyph width as a fraction of font-size) turns the pixel width into a chars-per-full-line count; --cc-quote-hold-min is the floor so a one-word burst still registers. */
+    --cc-quote-char-em: 0.5;
+    --cc-quote-hold-min: 1400ms;
+
+    /* Stream aesthetics: viewer-count drift + heart/emoji particle ranges. Heart/emoji durations are seconds; everything else carries its unit. */
     --cc-aes-viewer-start-min: 1000;    /* opening viewer count, rolled in [min, max] */
     --cc-aes-viewer-start-max: 10000;
     --cc-aes-viewer-interval: 2500ms;   /* how often the count drifts */
@@ -83,8 +95,7 @@
     --cc-oracle-aside2-chance: 0.4;     /* chance a VIP line gains a 2nd sentence */
     --cc-oracle-aside3-chance: 0.12;    /* chance it gains a 3rd (nested under the 2nd) */
 
-    /* Blog mode (microblog feed). Chances 0–1; digit count is a plain integer range.
-       Both handle rolls are independent. */
+    /* Blog mode (microblog feed). Chances 0–1; digit count is a plain integer range. Both handle rolls are independent. */
     --cc-blog-handle-lower-chance: 0.5;  /* chance a generated @handle is all-lowercase */
     --cc-blog-handle-digit-chance: 0.3;  /* chance it gains a trailing digit run */
     --cc-blog-handle-digit-min: 1;       /* fewest trailing digits when the digit roll hits */
@@ -189,8 +200,7 @@
     filter: blur(1px);
 }
 
-/* Stream special effects: each enabled effect adds a class to the anchor.
-   Effect descriptors are read by JS to inject particle and layer nodes. */
+/* Stream special effects: each enabled effect adds a class to the anchor. Effect descriptors are read by JS to inject particle and layer nodes. */
 
 /* Shared placement for injected nodes: absolute + click-through. */
 .cc-fx-layer,
@@ -436,8 +446,7 @@
     100% { opacity: 0; }
 }
 
-/* Sprites use transform for placement (composited, no layout thrash).
-   Bottom edge at floor; translateY pushes to the rest line (--cc-rest-down). */
+/* Sprites use transform for placement (composited, no layout thrash). Bottom edge at floor; translateY pushes to the rest line (--cc-rest-down). */
 
 /* Sidebar sprite: centred and fixed — never walks or mirrors. */
 .cc-sprite-wrap {
@@ -455,8 +464,7 @@
     transition: filter 600ms ease, opacity 600ms ease;
 }
  
-/* A single walker, centred on --cc-x (px) and lifted by the walk arc (--cc-y).
-   --cc-z is the stacking rank (1..N), dealt per walker at runtime for random front/back order. */
+/* A single walker, centred on --cc-x (px) and lifted by the walk arc (--cc-y). --cc-z is the stacking rank (1..N), dealt per walker at runtime for random front/back order. */
 .cc-walker {
     position: absolute;
     left: 0;
@@ -497,8 +505,7 @@
     font-size: var(--font-ui-small);
 }
  
-/* Root stage: full-window strip along the bottom edge where characters walk.
-   overflow:visible lets the bubble rise above the strip. */
+/* Root stage: full-window strip along the bottom edge where characters walk. overflow:visible lets the bubble rise above the strip. */
 .cc-root-stage {
     position: fixed;
     left: 0;
@@ -521,7 +528,7 @@
     margin: 0;
     transform: translateX(-50%) translateY(-4px);
     width: max-content;
-    max-width: 220px;
+    max-width: calc(var(--cc-bubble-max-width) * 1px);
     padding: 8px 12px;
     background: var(--background-secondary);
     border: 1px solid var(--background-modifier-border);
@@ -534,13 +541,11 @@
     z-index: calc(var(--layer-status-bar, 15) + 1);
 }
 
-/* In the root stage the bubble sits above the walker's head. */
+/* In the root stage the bubble floats above the sprite's top-most coloured pixel: box top (sprite-max-height) minus the measured transparent inset, plus the gap (--cc-bubble-gap as a fraction of this surface's max-height). */
 .cc-walker .cc-bubble {
     position: absolute;
     left: 50%;
-    bottom: calc(var(--cc-sprite-max-height, 300) * 1px);
-    margin-bottom: 8px;
-    max-width: 220px;
+    bottom: calc((var(--cc-sprite-max-height, 300) * (1 + var(--cc-bubble-gap))) * 1px - var(--cc-bubble-inset, 0px));
     z-index: 3;
 }
 
@@ -559,7 +564,7 @@
     opacity: 1;
     transform: translateX(-50%) translateY(0);
 }
- 
+
 /* Pill grid (animation toggles, enable grids, list editor name pills). */
 .cc-pill-grid {
     display: flex;
@@ -677,8 +682,7 @@ button:not(.clickable-icon).cc-tab-active {
     font-size: var(--font-ui-small);
 }
 
-/* Dual range: two sliders stacked with a value readout to the left.
-   The first sits in flow; the second overlays it. */
+/* Dual range: two sliders stacked with a value readout to the left. The first sits in flow; the second overlays it. */
 .cc-range {
     display: flex;
     align-items: center;
@@ -719,8 +723,7 @@ button:not(.clickable-icon).cc-tab-active {
     pointer-events: auto;
 }
 
-/* Stream comment feed: fixed overlay pinned to the root-split corner nearest the panel.
-   Bubbles stack away from the corner and fade in. */
+/* Stream comment feed: fixed overlay pinned to the root-split corner nearest the panel. Bubbles stack away from the corner and fade in. */
 .cc-feed {
     position: fixed;
     z-index: calc(var(--layer-status-bar, 15) + 1);
@@ -825,11 +828,7 @@ button:not(.clickable-icon).cc-tab-active {
     font-size: 0.85em;
 }
 
-/* ANIMATIONS — one behaviour = one class = one @keyframes, on the image.
-   Each keyframe is transform-only (+ translateY where needed).
-   Up (negative translateY) is capped at -3% (= --cc-rest-down).
-   Down (positive translateY) is unlimited (dip first, then rise).
-   Directional keyframes read var(--cc-dir) for L/R mirror. */
+/* ANIMATIONS — one behaviour = one class = one @keyframes, on the image. Each keyframe is transform-only (+ translateY where needed). Up (negative translateY) is capped at -3% (= --cc-rest-down); down (positive translateY) is unlimited (dip first, then rise). Directional keyframes read var(--cc-dir) for L/R mirror. */
 
 .cc-anim-shudder { animation: cc-anim-shudder 600ms ease; }
 .cc-anim-jump { animation: cc-anim-jump 550ms ease; }
@@ -1412,8 +1411,7 @@ button:not(.clickable-icon).cc-tab-active {
     75% { transform: translateX(calc(var(--cc-shake) * var(--cc-dir, 1) * -0.5)); }
 }
 
-/* Stream aesthetics: in-panel livestream overlay, shown while stream mode is on.
-   Particle motion (hearts/emoji) is WAAPI-driven; only placement lives here. */
+/* Stream aesthetics: in-panel livestream overlay, shown while stream mode is on. Particle motion (hearts/emoji) is WAAPI-driven; only placement lives here. */
 .cc-aes {
     position: absolute;
     inset: 0;

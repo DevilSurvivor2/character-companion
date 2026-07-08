@@ -2,9 +2,7 @@
 /* global __ccLoadRita -- defined by the build banner (esbuild.config.mjs): the lazy wrapper around the vendored RiTa script */
 const { ItemView, Menu, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, setIcon } = require("obsidian");
 const DEFAULT_ORACLE = require("../default-oracle-data.json");
-// Animation registry: one row = one animation class. Keyframes in styles.css.
-// role: surprise/idle (toggleable), sleep/flip/bob/tickle (function, via playRole), effect (internal).
-// directional: keyframe reads --cc-dir for L/R flip. root: false excludes from bottom-of-window walkers.
+// Animation registry: one row = one animation class (keyframes in styles.css). role: surprise/idle (toggleable), sleep/flip/bob/tickle (playRole functions), effect (internal). directional: keyframe reads --cc-dir for L/R flip. root: false excludes bottom-of-window walkers.
 const ANIMATIONS = [
     // surprise — click reactions; grid order is this order.
     { name: "shudder", role: "surprise" },
@@ -277,11 +275,7 @@ const SEED_BLOG = {
         "about to see my cousin's wedding!!!",
     ],
 };
-// Sibling data files (kept out of data.json). One row per file drives generic load/save.
-//   prop: plugin field.  file: sibling filename.  shape: (raw) => in-memory object.
-//   create: write file when genuinely MISSING (never on corrupt).
-//   seed: starter content on first run. Small defaults inline, bulky via default-*.json.
-//   afterSave: side effects (char save -> repaint views+stage; Oracle save -> retrain classifiers).
+// Sibling data files (kept out of data.json). One row per file drives generic load/save. Fields: prop (plugin field); file (sibling filename); shape (raw)=>in-memory object; create (write when genuinely MISSING, never on corrupt); seed (starter content on first run — small defaults inline, bulky via default-*.json); afterSave (side effects: char save -> repaint views+stage; Oracle save -> retrain classifiers).
 const DATA_FILES = [
     {
         prop: "characterData", file: "character-data.json", create: true, seed: () => SEED_CHARACTERS,
@@ -348,7 +342,8 @@ const DEFAULT_SETTINGS = {
     sidebarSpriteMaxHeight: 300,
     rootSpriteMaxHeight: 150,
     rootWalkSpeed: 20,
-    quoteDurationMs: 5000,
+    quoteDurationMs: 3000,
+    quoteTypewriter: false,   // on: reveal quotes sentence-by-sentence, typewriter-style; off: whole line at once
     surpriseChance: 20,
     animateOnQuote: true,
     idleEnabled: true,
@@ -451,18 +446,10 @@ function randomInterval(range, fn) {
 }
 // Resolve a vault-relative path (or bare unique filename) to an image URL, or null.
 function resolveSpriteUrl(app, path) {
-    if (!path)
-        return null;
     let file = app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) {
-        const dest = app.metadataCache.getFirstLinkpathDest(path, "");
-        if (dest instanceof TFile)
-            file = dest;
-    }
-    if (file instanceof TFile) {
-        return app.vault.getResourcePath(file);
-    }
-    return null;
+    if (!(file instanceof TFile))
+        file = app.metadataCache.getFirstLinkpathDest(path, "");
+    return file instanceof TFile ? app.vault.getResourcePath(file) : null;
 }
 // Image extensions recognised when a path points at a folder.
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"]);
@@ -553,8 +540,7 @@ function animationDurationMs(el) {
     const iter = iterRaw === "infinite" ? 1 : parseFloat(iterRaw) || 1;
     return longest * iter;
 }
-// Build an effect from --cc-fx-<key>-* CSS descriptors. Returns teardown function.
-// Descriptors: -count N, -rand n lo hi (per-particle CSS vars), -steps lo hi, -wander dLo dHi xr yr sLo sHi, -layers N
+// Build an effect from --cc-fx-<key>-* CSS descriptors (-count N, -rand n lo hi per-particle CSS vars, -steps lo hi, -wander dLo dHi xr yr sLo sHi, -layers N). Returns teardown function.
 function buildEffect(anchor, key) {
     const cs = activeWindow.getComputedStyle(anchor);
     const prop = (suffix) => cs.getPropertyValue("--cc-fx-" + key + "-" + suffix).trim();
@@ -668,10 +654,95 @@ function releasePointer(el, id) {
     }
     catch { /* already released — fine */ }
 }
+// Fraction (0–1 of natural height) of transparent rows atop a sprite — the gap from image top down to the first coloured pixel. Measured once per URL on an off-screen canvas (vault sprites are same-origin app:// resources, so untainted) and cached (holds the pending Promise while measuring, then the number); blank/unreadable resolves 0. A walker scales it by rendered height to lift the bubble onto the artwork, not the empty box top.
+const _spriteInsetCache = new Map();
+function spriteTopInsetFraction(url) {
+    if (!url)
+        return Promise.resolve(0);
+    const cached = _spriteInsetCache.get(url);
+    if (cached !== undefined)
+        return Promise.resolve(cached);
+    const p = new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            let frac = 0;
+            try {
+                const w = img.naturalWidth, h = img.naturalHeight;
+                const canvas = activeDocument.createElement("canvas");
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext("2d", { willReadFrequently: true });
+                ctx.drawImage(img, 0, 0);
+                const data = ctx.getImageData(0, 0, w, h).data;
+                // `|| 0` guards a pre-styles NaN read: without it every `alpha > NaN` is false, every row reads transparent, and frac would be a pathological 1. Threshold 0 (first row with any non-zero alpha) is a sane fallback.
+                const minAlpha = (tuning().bubbleInsetAlpha || 0) * 255;
+                let row = 0;
+                for (; row < h; row++) {
+                    let opaque = false;
+                    for (let x = 0; x < w; x++) {
+                        if (data[(row * w + x) * 4 + 3] > minAlpha) { opaque = true; break; }
+                    }
+                    if (opaque)
+                        break;
+                }
+                frac = h > 0 ? row / h : 0;
+            }
+            catch { frac = 0; }
+            _spriteInsetCache.set(url, frac);
+            resolve(frac);
+        };
+        img.onerror = () => { _spriteInsetCache.set(url, 0); resolve(0); };
+        img.src = url;
+    });
+    _spriteInsetCache.set(url, p);
+    return p;
+}
+// Split a quote into the sentences a walker reveals as consecutive bubbles (quoteTypewriter only). Hard breaks on . ! ?; an ellipsis (runs of 2+ dots normalised to … first) breaks only when the next word is capitalised, else stays attached. A merge pass folds runs shorter than --cc-quote-min-words words together, so a burst like "Whoa! Whoa! Whoa!" reads as one. Pure/static: unit-testable headless (pass an explicit min via mergeShortSentences).
+function splitQuote(text) {
+    const s = (text || "").replace(/\.{2,}/g, "…").trim();
+    if (!s)
+        return [];
+    const frags = [];
+    let start = 0;
+    const re = /[.!?…]+/g;
+    let m;
+    while ((m = re.exec(s))) {
+        const end = m.index + m[0].length;
+        // The next word decides an ellipsis break: skip trailing space and one opening quote, then test for an uppercase letter (end-of-text counts as a break).
+        let j = end;
+        while (j < s.length && /\s/.test(s[j])) j++;
+        if (j < s.length && /['"“‘«(]/.test(s[j])) j++;
+        const nextCap = j >= s.length || /\p{Lu}/u.test(s[j]);
+        // ! ? and a lone period always close a sentence; an ellipsis run closes only before a capitalised word.
+        if (/[!?]/.test(m[0]) || !m[0].includes("…") || nextCap) {
+            frags.push(s.slice(start, end).trim());
+            start = end;
+        }
+    }
+    if (start < s.length) {
+        const tail = s.slice(start).trim();
+        if (tail) frags.push(tail);
+    }
+    return mergeShortSentences(frags, tuning().quoteMinWords);
+}
+// Fold fragments shorter than `min` words forward into the next, so no bubble is a stray one- or two-word burst; a leftover short tail attaches to the previous fragment.
+function mergeShortSentences(frags, min) {
+    const out = [];
+    let buf = "";
+    for (const f of frags) {
+        buf = buf ? buf + " " + f : f;
+        if (buf.split(/\s+/).filter(Boolean).length >= min) {
+            out.push(buf);
+            buf = "";
+        }
+    }
+    if (buf)
+        out.length ? (out[out.length - 1] += " " + buf) : out.push(buf);
+    return out;
+}
 /* ---------------- root stage: walker + stage ---------------- */
-// A walker is in exactly one MODE; every interaction is a transition and the loop reads this field. WALK travelling · REST in the band · HELD carried · DROP landing · ANIM playing.
+// A walker is in exactly one MODE; every interaction is a transition and the loop reads this field. WALK travelling · REST in the band · HELD carried · DROP landing · ANIM playing. Only WALK and DROP have per-frame bodies; HELD/REST/ANIM are event- or timer-driven.
 const MODE = { WALK: "walk", REST: "rest", HELD: "held", DROP: "drop", ANIM: "anim" };
-// Only WALK and DROP have per-frame bodies. HELD/REST/ANIM are event- or timer-driven.
 // Independent rest fidgets, each rolled on its own chance (a tuning key) and fired once at a random point in the FIRST part of the rest window (--cc-rest-idle-fraction). They layer. Add one: append a row.
 const REST_ACTIVITIES = [
     { chance: "idleChance", play: (w) => w.playIdleBeat() },
@@ -741,7 +812,6 @@ class Walker {
         // Lazy per-role bags for the function-role pulls (flip/bob/tickle/sleep).
         this.roleBags = {};
         this.spriteUrls = urls;
-        this.urlSig = urls.join("|");
         this.speed = speed;
         // ---- role variables ---- The universal cycle reads ONLY these flags, never `this.stage`, so a surface configures a walker by setting them rather than forking on type.
         this.grabbable = !!stage; // pointer-grab lifts it into HELD/DROP; else a tap just wakes
@@ -781,18 +851,20 @@ class Walker {
         this.actLoop = false;
         this.watchUntil = 0;
         this.easeTimer = null;
+        // The single live timer of a speak sequence. A quote types out sentence by sentence, but strictly one step at a time (each typewriter tick / sentence hold schedules the next), so only ever one is pending.
         this.bubbleTimer = null;
         // Sleep clock: time of last interaction.
         this.lastInteraction = Date.now();
-        this.imgEl.src = this.spriteBag.next(urls);
         this.imgEl.draggable = false;
         this.imgEl.alt = character.name;
         this.imgEl.addEventListener("pointerdown", (e) => this.onDown(e));
         this.imgEl.addEventListener("pointermove", (e) => this.onMove(e));
         this.imgEl.addEventListener("pointerup", (e) => this.onUp(e));
         this.imgEl.addEventListener("pointercancel", (e) => this.onCancel(e));
-        // Cache half-width on each load so the walk loop avoids a per-frame reflow.
-        this.imgEl.addEventListener("load", () => { this.halfWidth = this.imgEl.offsetWidth / 2; });
+        // On each load, cache the half-width (so the walk loop avoids a per-frame reflow) and re-anchor the bubble now that the rendered height is real.
+        this.imgEl.addEventListener("load", () => { this.halfWidth = this.imgEl.offsetWidth / 2; this.applyBubbleInset(); });
+        this.setSprite(this.spriteBag.next(urls));
+        // A cached/data-URL sprite can complete synchronously (no load event guaranteed); setSprite's inset pass already covers it, only the half-width needs seeding.
         if (this.imgEl.complete && this.imgEl.offsetWidth)
             this.halfWidth = this.imgEl.offsetWidth / 2;
     }
@@ -1072,7 +1144,7 @@ class Walker {
         this.playRole("flip", true);
         // Tracked in actTimers (queued AFTER playRole, whose easeToward clears them) so a teardown mid-flip also cancels the swap.
         this.actTimers.push(window.setTimeout(() => {
-            this.imgEl.src = this.spriteBag.next(this.spriteUrls);
+            this.setSprite(this.spriteBag.next(this.spriteUrls));
         }, tuning().flipSwap));
     }
     // Play a random animation of a function-role (flip/bob/tickle/sleep), drawn without repeats from a per-role bag. The single path for every role-named behaviour.
@@ -1128,9 +1200,13 @@ class Walker {
         this.clearActivities();
         stopAnimation(this.imgEl);
         this.endEase();
-        if (this.bubbleTimer) { window.clearTimeout(this.bubbleTimer); this.bubbleTimer = null; }
+        this.clearBubbleTimer();
         if (this.bubbleEl)
             this.bubbleEl.removeClass("cc-bubble-visible");
+    }
+    // Cancel the in-flight speak sequence (whichever step is pending). Leaves the visible class alone — speak() re-arms it, clearTimers() drops it.
+    clearBubbleTimer() {
+        if (this.bubbleTimer) { window.clearTimeout(this.bubbleTimer); this.bubbleTimer = null; }
     }
     // True while the pointer isn't meaningfully moving the sprite. Shared by the held escape watch and release's set-down-vs-flick decision.
     isPointerStill() {
@@ -1214,24 +1290,116 @@ class Walker {
         if (name)
             this.beginAnim(ANIM_BY_NAME[name], true);
     }
-    // Draw one of the character's lines into the bubble and hide it after the quote duration. No-op when there's no bubble or nothing to say.
+    // Speak one of the character's lines through the one bubble. With quoteTypewriter on, split into sentences typed out consecutively (the CommentFeed "push a part" idea, but sequential — one held at a time, not stacked); off, the whole line is one chunk shown at once. No-op with no bubble/nothing to say; a blank/punctuation-only line yields no chunks and is skipped.
     speak() {
         const quotes = this.character.quotes;
         if (!this.bubbleEl || quotes.length === 0)
             return;
-        if (this.bubbleTimer) { window.clearTimeout(this.bubbleTimer); this.bubbleTimer = null; }
-        this.bubbleEl.setText(this.quoteBag.next(quotes));
+        this.clearBubbleTimer();
+        const line = this.quoteBag.next(quotes);
+        const chunks = this.settings.quoteTypewriter ? splitQuote(line) : [line.trim()].filter(Boolean);
+        if (chunks.length === 0)
+            return;
         this.positionBubble();
         this.bubbleEl.addClass("cc-bubble-visible");
-        this.bubbleTimer = window.setTimeout(() => this.bubbleEl.removeClass("cc-bubble-visible"), this.settings.quoteDurationMs);
+        this.playChunk(chunks, 0);
     }
-    // Place the body-level sidebar bubble against the sprite picture. It lives on <body> (like the comment feed) so no panel frame can clip it, which means its coordinates are viewport-relative and must be set here: centred on the picture, with the bubble's bottom edge sitting on the picture's top edge (its tail then points down onto the sprite). No-op for the floor bubble (no anchor): CSS positions that one absolutely in its own wrap.
+    // Reveal chunk `idx` (typed out when streaming, dropped in whole when not), hold it for its length-scaled duration (see quoteHoldMs), then advance to the next chunk or hide after the last. Each chunk holds for its own content, so a multi-sentence stream runs proportionally longer.
+    playChunk(chunks, idx) {
+        const hold = () => {
+            this.bubbleTimer = window.setTimeout(() => {
+                if (idx + 1 < chunks.length)
+                    this.playChunk(chunks, idx + 1);
+                else
+                    this.bubbleEl.removeClass("cc-bubble-visible");
+            }, this.quoteHoldMs(chunks[idx]));
+        };
+        if (this.settings.quoteTypewriter)
+            this.typeOut(chunks[idx], this.wrapBreaks(chunks[idx]), 0, hold);
+        else { this.bubbleEl.setText(chunks[idx]); hold(); }
+    }
+    // How long a fully-revealed bubble holds, scaled to its content so short lines clear sooner and long (wrapped) ones linger. The quoteDurationMs SETTING is spent over exactly one full line: chars-per-full-line = bubble max-width ÷ avg glyph width (--cc-quote-char-em × the bubble's own font-size, so it tracks max-width and theme scale), and the per-char rate falls out as setting ÷ that. Floored at --cc-quote-hold-min so a one-word burst still registers. Shared by both surfaces and both typewriter states.
+    quoteHoldMs(text) {
+        const T = tuning();
+        const fontPx = parseFloat(activeWindow.getComputedStyle(this.bubbleEl).fontSize) || 13;
+        const charsPerLine = T.bubbleMaxWidth / (fontPx * T.quoteCharEm);
+        const perChar = this.settings.quoteDurationMs / charsPerLine;
+        return Math.max(T.quoteHoldMin, perChar * text.length);
+    }
+    // Where the bubble will wrap `text` — the char index each visual line after the first begins at. Measured on the real bubble itself: set to the full text and read synchronously, then emptied by the reveal before the next paint, so the full line never flashes and the breaks are the browser's own by construction. typeOut applies them as hard breaks while revealing, which lets a word sit on its final line from its first character instead of growing on one line and jumping to the next.
+    wrapBreaks(text) {
+        this.bubbleEl.setText(text);
+        const node = this.bubbleEl.firstChild;
+        const breaks = [];
+        if (node) {
+            const range = activeDocument.createRange();
+            let lineTop = null;
+            for (let k = 0; k < text.length; k++) {
+                range.setStart(node, k);
+                range.setEnd(node, k + 1);
+                const top = range.getBoundingClientRect().top;
+                if (lineTop === null)
+                    lineTop = top;
+                else if (top - lineTop > 1) { breaks.push(k); lineTop = top; }
+            }
+        }
+        return breaks;
+    }
+    // Paint the first `i` chars of `text` with the pre-measured wraps applied as hard breaks, so the box grows line by line (width within a line, height as a new line opens) with no reserved empty space and no word ever teleporting. A completed line sheds its trailing wrap space.
+    renderReveal(text, breaks, i) {
+        this.bubbleEl.empty();
+        const bounds = [...breaks, text.length];
+        let start = 0;
+        for (let b = 0; b < bounds.length && start < i; b++) {
+            const end = bounds[b];
+            let seg = text.slice(start, Math.min(i, end));
+            if (i >= end)
+                seg = seg.replace(/\s+$/, "");
+            if (b > 0)
+                this.bubbleEl.createEl("br");
+            this.bubbleEl.appendText(seg);
+            start = end;
+        }
+    }
+    // Reveal `text` one char at a time (wrapped at the pre-measured `breaks`), calling done() when whole. The gap after a char lengthens on punctuation: end marks (. ! ? and a sentence-final …) add --cc-quote-pause-end, mid marks (, — and a mid-sentence …) add --cc-quote-pause-mid (half). A … is sentence-final when only whitespace follows it in this already-split sentence.
+    typeOut(text, breaks, i, done) {
+        this.renderReveal(text, breaks, i);
+        if (i >= text.length) { done(); return; }
+        const T = tuning();
+        let delay = T.quoteTypeSpeed;
+        const c = i > 0 ? text[i - 1] : "";
+        if (/[.!?]/.test(c))
+            delay += T.quotePauseEnd;
+        else if (c === "…")
+            delay += (text.slice(i).trim() === "" ? T.quotePauseEnd : T.quotePauseMid);
+        else if (c === "," || c === "—")
+            delay += T.quotePauseMid;
+        this.bubbleTimer = window.setTimeout(() => this.typeOut(text, breaks, i + 1, done), delay);
+    }
+    // The single path to point the sprite at a URL: swap the image, then re-anchor the bubble to the new artwork. Every src assignment (create, rest flip, url refresh) routes here so the inset stays in sync.
+    setSprite(url) {
+        this.imgEl.src = url;
+        this.applyBubbleInset();
+    }
+    // Lift the bubble by the current sprite's transparent-top inset (measured async, cached per URL) so it hugs the artwork, not the empty box top. Guards against a sprite swap resolving late; a not-yet-laid-out image reads 0 height here and is corrected by the load-listener re-run. The wrap's --cc-bubble-inset is the single store: styles.css positions the floor bubble off it, positionBubble reads it back for the sidebar bubble.
+    applyBubbleInset() {
+        const url = this.imgEl.src;
+        spriteTopInsetFraction(url).then((frac) => {
+            if (this.imgEl.src !== url)
+                return;
+            this.wrapEl.setCssProps({ "--cc-bubble-inset": frac * this.imgEl.offsetHeight + "px" });
+        });
+    }
+    // Place the body-level sidebar bubble against the sprite. It lives on <body> (like the comment feed) so no panel frame clips it, so coordinates are viewport-relative and set here: centred on the picture, bottom edge floating --cc-bubble-gap above the top-most coloured pixel (picture top + measured inset), tail pointing down. No-op for the floor bubble (no anchor) — CSS positions that one off the same inset + gap.
     positionBubble() {
         if (!this.bubbleAnchorEl)
             return;
         const r = this.bubbleAnchorEl.getBoundingClientRect();
         this.bubbleEl.style.left = (r.left + r.width / 2) + "px";
-        this.bubbleEl.style.bottom = (activeWindow.innerHeight - r.top) + "px";
+        // Gap is a fraction of this surface's sprite max-height (sidebar-only path — the floor bubble is CSS-positioned), keeping the float proportional across the two heights.
+        const gap = tuning().bubbleGap * this.settings.sidebarSpriteMaxHeight;
+        const inset = parseFloat(this.wrapEl.style.getPropertyValue("--cc-bubble-inset")) || 0;
+        this.bubbleEl.style.bottom = (activeWindow.innerHeight - r.top - inset + gap) + "px";
     }
     // Answer a double-tap: a surprise animation or (optionally) a bob plus a spoken line. End the carry first (no bounce); settle to rest if nothing animated. (The sprite image only ever swaps via the chanced flip rest activity, never on a poke.)
     react() {
@@ -1474,19 +1642,16 @@ class CompanionStage {
                 continue;
             }
             w.speed = speed;
-            const sig = urls.join("|");
-            if (sig !== w.urlSig) {
-                if (urls.length === 0) {
-                    this.destroyWalker(w);
-                    this.walkers.delete(c.id);
-                    changed = true;
-                    continue;
-                }
-                w.urlSig = sig;
-                w.spriteUrls = urls;
-                if (!urls.includes(w.imgEl.src))
-                    w.imgEl.src = w.spriteBag.next(urls);
+            if (urls.length === 0) {
+                this.destroyWalker(w);
+                this.walkers.delete(c.id);
+                changed = true;
+                continue;
             }
+            w.spriteUrls = urls;
+            // An unchanged path list keeps the current picture (its src is in the list); a changed one re-picks only when it must.
+            if (!urls.includes(w.imgEl.src))
+                w.setSprite(w.spriteBag.next(urls));
         }
         // Re-deal stacking depth only on a cast change, so a slider tweak doesn't reshuffle who's in front.
         if (changed)
@@ -1824,8 +1989,7 @@ class RiScriptEngine {
     pending(line) {
         return /[[$]/.test(line) && !this.loaded;
     }
-    // Expand every random-string filler ($num/$let/$mix<…>) in place — a pre-pass run before the RiScript grammar (see RAND_CHARS). Each match draws lo..hi chars uniformly from its pool (case is the pool's, so there is no case logic here). A missing hi means an exact length; a reversed lo-hi is swapped.
-    // $handle rides the same pre-pass: each occurrence becomes a fresh random username (so two $handle in one line are two different users). It resolves to the bare name — write "@$handle" for a mention — the microblog sibling of these fillers.
+    // Expand every random-string filler ($num/$let/$mix<…>) in place — a pre-pass before the RiScript grammar (see RAND_CHARS). Each match draws lo..hi chars uniformly from its pool (case is the pool's); a missing hi means an exact length, a reversed lo-hi is swapped. $handle rides the same pre-pass: each occurrence becomes a fresh random username (two $handle = two users), resolving to the bare name — write "@$handle" for a mention — the microblog sibling of these fillers.
     expandRandom(line) {
         line = line.replace(/\$handle\b/g, () => this.randomHandle());
         return line.replace(RAND_TOKEN, (_, kind, loStr, hiStr) => {
@@ -1846,9 +2010,7 @@ class RiScriptEngine {
     }
 }
 /* ---------------- Oracle mode ---------------- */
-// Oracle: independent feed mode. Three message types (SYSTEM/ANON/VIP), generated locally.
-// RiTa = grammar+inflection, compromise = lemmatise input, whichx = classify typed line to a VIP.
-// Only VIP consults typing; others are ambient. Desktop-only. Self-contained.
+// Oracle: independent feed mode. Three message types (SYSTEM/ANON/VIP), generated locally. RiTa = grammar+inflection, compromise = lemmatise input, whichx = classify typed line to a VIP. Only VIP consults typing; others are ambient. Desktop-only, self-contained.
 class Oracle {
     constructor(view) {
         this.view = view;
@@ -2062,8 +2224,6 @@ class CompanionView extends ItemView {
         super(leaf);
         this.plugin = plugin;
         this.walker = null;
-        // The sprite's speech bubble, an off-panel element on <body> (created in renderBody, reaped in cleanupWalker) so no panel frame clips it.
-        this.floatBubble = null;
         this.observer = null;
         // Fires repositionOverlays when the panel's own box changes (split-divider drag) — the case window "resize" / "layout-change" both miss.
         this.resizeObserver = null;
@@ -2182,15 +2342,12 @@ class CompanionView extends ItemView {
         this.feed.reposition();
         this.walker?.positionBubble();
     }
-    // Tear down the current sprite's timers before a re-render or close. The bubble lives on <body>, outside the panel root.empty() clears, so drop it explicitly here too.
+    // Tear down the current sprite's timers before a re-render or close. Its bubble lives on <body>, outside the panel root.empty() clears, so drop it explicitly here too.
     cleanupWalker() {
         if (this.walker) {
             this.walker.clearTimers();
+            this.walker.bubbleEl.remove();
             this.walker = null;
-        }
-        if (this.floatBubble) {
-            this.floatBubble.remove();
-            this.floatBubble = null;
         }
     }
     // Liveness gate for the panel. Preserved across blur: sprite + background. Torn down: feed + effects.
@@ -2560,7 +2717,6 @@ class CompanionView extends ItemView {
         const sprite = spriteWrap.createEl("img", { cls: "cc-sprite" });
         // Bubble lives on <body> (same level as the comment feed), NOT inside the panel, so the workspace-leaf frame can never clip it — it stays fully visible even past the panel edge. Being off-panel, root.empty() can't reap it, so cleanupWalker removes it. The walker positions it against the sprite picture (`sprite`) each time it speaks; the view re-runs that on resize/layout-change while it's up.
         const bubble = activeDocument.body.createDiv({ cls: "cc-bubble" });
-        this.floatBubble = bubble;
         this.walker = new Walker(null, this.plugin, character, { wrapEl: spriteWrap, imgEl: sprite, bubbleEl: bubble, bubbleAnchorEl: sprite }, urls, 0);
         // The livestream overlay sits on the anchor, above the sprite (syncAesthetics gates it).
         this.buildAesthetics(anchor);
@@ -2869,8 +3025,7 @@ class CompanionSettingTab extends PluginSettingTab {
             onMutate: () => this.rebuildPillGrid("mail"),
             renderBody: (host, m, ed) => this.renderMailBody(host, m, ed),
         });
-        // Tab table — the single source for both the tab bar (display) and the body dispatch (renderBody). Add a page = add a row.
-        // An `icon` marks a list-editor page (Character/Comment/Patron/Inbox): the tab bar renders it icon-only, expanding to icon+label only while active (see display()).
+        // Tab table — the single source for both the tab bar (display) and the body dispatch (renderBody); add a page = add a row. An `icon` marks a list-editor page (Character/Comment/Patron/Inbox): the tab bar renders it icon-only, expanding to icon+label only while active (see display()).
         this.tabs = [
             { id: "behavior", label: "Behavior", render: (c) => this.renderBehaviorTab(c) },
             { id: "character", label: "Cast", icon: "user-round", render: (c) => this.renderCastTab(c) },
@@ -3115,9 +3270,15 @@ class CompanionSettingTab extends PluginSettingTab {
         });
         this.addMsSliderSetting(c, {
             name: "Quote duration",
-            desc: "How long the speech bubble stays visible.",
-            unit: "sec", min: 5, max: 20,
+            desc: "Visible time for a full line of speech. Scaled to the bubble width, so shorter quotes clear sooner, and longer ones linger.",
+            unit: "sec", min: 1, max: 5,
             key: "quoteDurationMs",
+        });
+        this.addToggleSetting(c, {
+            name: "Quote typewriter",
+            desc: "On reveals a quote sentence by sentence, typewriter-style. Off shows the whole line at once.",
+            get: () => this.plugin.settings.quoteTypewriter,
+            set: (v) => (this.plugin.settings.quoteTypewriter = v),
         });
         new Setting(c)
             .setName("Characters in sidebar")
@@ -3126,7 +3287,7 @@ class CompanionSettingTab extends PluginSettingTab {
         new Setting(c).setName("Display in root").setHeading();
         this.addSliderSetting(c, {
             name: "Sprite max height", unit: "px",
-            desc: "Applies to all characters walking along the bottom of the window.",
+            desc: "Width scales to match.",
             min: 100, max: 500, step: 20,
             get: () => this.plugin.settings.rootSpriteMaxHeight,
             set: (v) => (this.plugin.settings.rootSpriteMaxHeight = v),
@@ -3746,10 +3907,7 @@ class CharacterCompanionPlugin extends Plugin {
         if (desc.afterSave)
             desc.afterSave(this, rerender);
     }
-    // Read a sibling JSON file. Returns { data, existed }.
-    //   missing -> {null, false}: safe to seed.
-    //   corrupt -> {null, true}: backed up as .bak, never overwritten.
-    //   ok -> {parsed, true}.
+    // Read a sibling JSON file. Returns { data, existed }: missing -> {null, false} (safe to seed); corrupt -> {null, true} (backed up as .bak, never overwritten); ok -> {parsed, true}.
     async readJsonFile(path) {
         const adapter = this.app.vault.adapter;
         if (!(await adapter.exists(path)))
