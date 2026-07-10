@@ -435,16 +435,17 @@ function formatHMS(totalS) {
     return `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`;
 }
 // Self-rescheduling random timer: waits randRange(lo, hi) ms, fires fn(), repeats. range() is read every cycle so live setting edits apply (hi floored to lo). Returns a stop() handle. The one primitive behind the comment feed and the stream-background cycle.
-function randomInterval(range, fn) {
+// `win` is the OWNING window (el.win), captured once by the caller — never `activeWindow` read per call: timer ids are per-window, so a set/clear pair split across two windows would never cancel and the interval would run forever.
+function randomInterval(win, range, fn) {
     let timer = null;
     const tick = () => {
         const { lo, hi } = range();
-        timer = window.setTimeout(() => { fn(); tick(); }, randRange(lo, Math.max(lo, hi)));
+        timer = win.setTimeout(() => { fn(); tick(); }, randRange(lo, Math.max(lo, hi)));
     };
     tick();
-    return () => { if (timer != null) window.clearTimeout(timer); };
+    return () => { if (timer != null) win.clearTimeout(timer); };
 }
-// Resolve a vault-relative path (or bare unique filename) to an image URL, or null.
+// Resolve a vault-relative path (or bare unique filename) to an image URL, or null. `app` is threaded in from a Component caller — never the discouraged global, and never `this.app`: these are free functions, so under "use strict" `this` is undefined here.
 function resolveSpriteUrl(app, path) {
     let file = app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile))
@@ -598,7 +599,7 @@ function stopAnimation(imgEl) {
     if (!imgEl)
         return;
     if (imgEl.__ccAnimTimer != null) {
-        window.clearTimeout(imgEl.__ccAnimTimer);
+        imgEl.win.clearTimeout(imgEl.__ccAnimTimer);
         imgEl.__ccAnimTimer = null;
     }
     imgEl.classList.remove(...CLEARABLE);
@@ -617,7 +618,7 @@ function playAnimation(imgEl, spec, onEnd) {
     if (spec.directional)
         imgEl.setCssProps({ "--cc-dir": Math.random() < 0.5 ? "-1" : "1" });
     imgEl.classList.add("cc-anim-" + spec.name);
-    imgEl.__ccAnimTimer = window.setTimeout(() => {
+    imgEl.__ccAnimTimer = imgEl.win.setTimeout(() => {
         imgEl.__ccAnimTimer = null;
         stopAnimation(imgEl);
         if (onEnd)
@@ -635,6 +636,7 @@ function whenStyled(fn) {
         fn();
         return;
     }
+    // `window`, not `activeWindow`: a bare one-shot poll with nothing to cancel, and obsidianmd/prefer-window-timers wants timer calls addressed to `window`.
     window.requestAnimationFrame(() => whenStyled(fn));
 }
 // True only while this app window is foreground and focused — when the loops should run.
@@ -663,7 +665,7 @@ function spriteTopInsetFraction(url) {
     if (cached !== undefined)
         return Promise.resolve(cached);
     const p = new Promise((resolve) => {
-        const img = new Image();
+        const img = activeDocument.createElement("img");
         img.onload = () => {
             let frac = 0;
             try {
@@ -831,6 +833,8 @@ class Walker {
         this.wrapEl = els.wrapEl;
         this.imgEl = els.imgEl;
         this.bubbleEl = els.bubbleEl;
+        // The window this sprite's DOM actually lives in (the popped-out one for a detached sidebar leaf). Captured once, never re-read from `activeWindow`: every timer below is a set/clear pair, and ids don't cross windows.
+        this.win = els.wrapEl.win;
         // Set only for a fixed (frame-escaping) sidebar bubble: the element whose head the bubble is JS-positioned over. Null for the floor bubble (an absolute child of its own walker wrap, positioned by CSS).
         this.bubbleAnchorEl = els.bubbleAnchorEl || null;
         // Images/quotes are per-sprite; idle/surprise share one bag each across the troupe (stage cycles them without repeats), falling back to private when stageless.
@@ -961,7 +965,7 @@ class Walker {
         this.endWatch();
         // A pending ease timer means a previous ease is still in flight: yOffset already holds THAT ease's target, but the rendered position is mid-glide. Count it as movement even when the target matches, so this call re-arms the glide (a live transition retargets smoothly) instead of early-returning — an early return would run `then` mid-glide with cc-eased stranded, and the next setEasing(false) would snap the sprite to the target. (Only the timer is cleared, never endEase: the eased state must survive the retarget.)
         const gliding = this.easeTimer !== null;
-        if (gliding) { window.clearTimeout(this.easeTimer); this.easeTimer = null; }
+        if (gliding) { this.win.clearTimeout(this.easeTimer); this.easeTimer = null; }
         const easingImg = this.easeImagePose();
         const needY = gliding || this.yOffset !== targetY;
         if (needY) {
@@ -975,7 +979,7 @@ class Walker {
                 then();
             return;
         }
-        this.easeTimer = window.setTimeout(() => {
+        this.easeTimer = this.win.setTimeout(() => {
             this.endEase();
             if (then)
                 then();
@@ -983,7 +987,7 @@ class Walker {
     }
     // End the ease now — drop any pending ease timer and strip the eased state (both cc-eased classes and the frozen inline pose) so nothing smooths (or later snaps) a value-driven frame. The timer's own tail AND the cut-short for every early exit (full teardown, drop release); a no-op when nothing is easing.
     endEase() {
-        if (this.easeTimer) { window.clearTimeout(this.easeTimer); this.easeTimer = null; }
+        if (this.easeTimer) { this.win.clearTimeout(this.easeTimer); this.easeTimer = null; }
         this.imgEl.classList.remove("cc-eased");
         this.imgEl.setCssProps({ transform: "" });
         this.setEasing(false);
@@ -1172,7 +1176,7 @@ class Walker {
         this.lastFlip = now;
         this.playRole("flip", true);
         // Tracked in actTimers (queued AFTER playRole, whose easeToward clears them) so a teardown mid-flip also cancels the swap.
-        this.actTimers.push(window.setTimeout(() => {
+        this.actTimers.push(this.win.setTimeout(() => {
             this.setSprite(this.spriteBag.next(this.spriteUrls));
         }, tuning().flipSwap));
     }
@@ -1221,7 +1225,7 @@ class Walker {
     clearActivities() {
         this.actToken++;
         for (const id of this.actTimers)
-            window.clearTimeout(id);
+            this.win.clearTimeout(id);
         this.actTimers.length = 0;
     }
     // Full teardown (pause off screen / destroy): every timer, any in-flight image animation, and the bubble. Widest of three scopes (clearActivities = the sequence; endDrag = the carry). The bubble's visible CLASS is dropped too, else a stranded bubble wedges the rest cycle (playIdleBeat won't speak over a visible one).
@@ -1235,7 +1239,7 @@ class Walker {
     }
     // Cancel the in-flight speak sequence (whichever step is pending). Leaves the visible class alone — speak() re-arms it, clearTimers() drops it.
     clearBubbleTimer() {
-        if (this.bubbleTimer) { window.clearTimeout(this.bubbleTimer); this.bubbleTimer = null; }
+        if (this.bubbleTimer) { this.win.clearTimeout(this.bubbleTimer); this.bubbleTimer = null; }
     }
     // True while the pointer isn't meaningfully moving the sprite. Shared by the held escape watch and release's set-down-vs-flick decision.
     isPointerStill() {
@@ -1256,7 +1260,7 @@ class Walker {
             playAnimation(this.imgEl, ANIM_BY_NAME[HOLD_SHAKES[rung]]);
             count++;
             const interval = rung === 0 ? T.holdWiggleInterval : T.holdStruggleInterval;
-            this.actTimers.push(window.setTimeout(count >= total ? done : bout, interval));
+            this.actTimers.push(this.win.setTimeout(count >= total ? done : bout, interval));
         };
         bout();
     }
@@ -1264,10 +1268,10 @@ class Walker {
     holdEscape(done) {
         const T = tuning();
         if (!this.character.escape) {
-            this.actTimers.push(window.setTimeout(done, T.escapeStillWindow));
+            this.actTimers.push(this.win.setTimeout(done, T.escapeStillWindow));
             return;
         }
-        this.actTimers.push(window.setTimeout(() => {
+        this.actTimers.push(this.win.setTimeout(() => {
             if (this.mode !== MODE.HELD)
                 return;
             // Wriggle free only if the pointer is still (same test release uses).
@@ -1291,10 +1295,10 @@ class Walker {
             if (Math.random() >= T[act.chance])
                 continue;
             const delay = Math.random() * windowMs * T.restIdleFraction;
-            this.actTimers.push(window.setTimeout(() => act.play(this), delay));
+            this.actTimers.push(this.win.setTimeout(() => act.play(this), delay));
         }
         // End the window: a mover walks, a 0-speed sprite re-rests. A fidget that animates first cancels this through easeToward; otherwise it fires here.
-        this.actTimers.push(window.setTimeout(() => this.beginWalk(), windowMs));
+        this.actTimers.push(this.win.setTimeout(() => this.beginWalk(), windowMs));
     }
     // One rest beat. Asleep → a doze (the dim is synced in beginRest). Awake → a spoken line or an idle move, gated by settings (chatter chance = how often a beat speaks vs moves). The idle pool excludes off-floor strolls for a root-only walker.
     playIdleBeat() {
@@ -1336,7 +1340,7 @@ class Walker {
     // Reveal chunk `idx` (typed out when streaming, dropped in whole when not), hold it for its length-scaled duration (see quoteHoldMs), then advance to the next chunk or hide after the last. Each chunk holds for its own content, so a multi-sentence stream runs proportionally longer.
     playChunk(chunks, idx) {
         const hold = () => {
-            this.bubbleTimer = window.setTimeout(() => {
+            this.bubbleTimer = this.win.setTimeout(() => {
                 if (idx + 1 < chunks.length)
                     this.playChunk(chunks, idx + 1);
                 else
@@ -1403,7 +1407,7 @@ class Walker {
             delay += (text.slice(i).trim() === "" ? T.quotePauseEnd : T.quotePauseMid);
         else if (c === "," || c === ";" || c === "—")
             delay += T.quotePauseMid;
-        this.bubbleTimer = window.setTimeout(() => this.typeOut(text, breaks, i + 1, done), delay);
+        this.bubbleTimer = this.win.setTimeout(() => this.typeOut(text, breaks, i + 1, done), delay);
     }
     // The single path to point the sprite at a URL: swap the image, then re-anchor the bubble to the new artwork. Every src assignment (create, rest flip, url refresh) routes here so the inset stays in sync.
     setSprite(url) {
@@ -1424,11 +1428,13 @@ class Walker {
         if (!this.bubbleAnchorEl)
             return;
         const r = this.bubbleAnchorEl.getBoundingClientRect();
-        this.bubbleEl.style.left = (r.left + r.width / 2) + "px";
         // Gap is a fraction of this surface's sprite max-height (sidebar-only path — the floor bubble is CSS-positioned), keeping the float proportional across the two heights.
         const gap = tuning().bubbleGap * this.settings.sidebarSpriteMaxHeight;
         const inset = parseFloat(this.wrapEl.style.getPropertyValue("--cc-bubble-inset")) || 0;
-        this.bubbleEl.style.bottom = (activeWindow.innerHeight - r.top - inset + gap) + "px";
+        this.bubbleEl.setCssProps({
+            left: (r.left + r.width / 2) + "px",
+            bottom: (activeWindow.innerHeight - r.top - inset + gap) + "px",
+        });
     }
     // Answer a double-tap: a surprise animation or (optionally) a bob plus a spoken line. End the carry first (no bounce); settle to rest if nothing animated. (The sprite image only ever swaps via the chanced flip rest activity, never on a poke.)
     react() {
@@ -1484,7 +1490,7 @@ class Walker {
         this.lastMoveX = clientX;
         this.lastMoveT = performance.now();
         // Queued AFTER easeToward, whose clearActivities would otherwise drop it.
-        this.actTimers.push(window.setTimeout(() => this.runActivities(HELD_ACTIVITIES, true), T.holdStart));
+        this.actTimers.push(this.win.setTimeout(() => this.runActivities(HELD_ACTIVITIES, true), T.holdStart));
     }
     onDown(e) {
         if (e.button !== 0)
@@ -1573,6 +1579,8 @@ class CompanionStage {
     constructor(plugin) {
         this.plugin = plugin;
         this.stageEl = null;
+        // Set by mount() from the stage's own DOM; nothing schedules a frame before then.
+        this.win = null;
         this.walkers = new Map();
         this.raf = null;
         this.lastFrame = null;
@@ -1588,6 +1596,8 @@ class CompanionStage {
         if (this.stageEl)
             return;
         this.stageEl = activeDocument.body.createDiv({ cls: "cc-root-stage" });
+        // The window the stage is pinned to, captured with its DOM. tick() schedules the next frame and pause() cancels it, so both MUST address the same window — reading `activeWindow` per call would let a focus change strand a rAF that pause() can never cancel.
+        this.win = this.stageEl.win;
         this.plugin.registerDomEvent(activeWindow, "resize", () => this.onResize());
         this.plugin.registerDomEvent(activeWindow, "pointermove", (e) => this.cursor.move(e));
         this.plugin.registerDomEvent(activeDocument.documentElement, "pointerleave", () => this.cursor.leave());
@@ -1611,7 +1621,7 @@ class CompanionStage {
     // Stop the frame loop and clear every walker's pending timer; in-flight CSS animations finish on their own, nothing new starts.
     pause() {
         if (this.raf !== null) {
-            window.cancelAnimationFrame(this.raf);
+            this.win.cancelAnimationFrame(this.raf);
             this.raf = null;
         }
         this.lastFrame = null;
@@ -1621,7 +1631,7 @@ class CompanionStage {
     // Restart the loop (lastFrame null, so tick re-seeds and skips the first dt — no jump after a long pause). Re-arm any resting walker, whose window timer pause cleared.
     resume() {
         if (this.raf === null)
-            this.raf = window.requestAnimationFrame(this.tick);
+            this.raf = this.win.requestAnimationFrame(this.tick);
         for (const w of this.walkers.values())
             if (w.mode === MODE.REST)
                 w.beginRest();
@@ -1700,7 +1710,7 @@ class CompanionStage {
         return w;
     }
     tick(now) {
-        this.raf = window.requestAnimationFrame(this.tick);
+        this.raf = this.win.requestAnimationFrame(this.tick);
         if (this.lastFrame === null) {
             this.lastFrame = now;
             return;
@@ -1964,6 +1974,7 @@ class RiScriptEngine {
         if (this.loadFailed) return false;
         try {
             // RiTa's vendored build is a browser IIFE assigning the bare global `RiTa`; the build wraps it in `__ccLoadRita` (see esbuild.config.mjs) so its 1.5 MB only parses+runs HERE, on first engine use, never at plugin load. compromise/whichx are require()d, which esbuild likewise defers to the first call. The typeof guard keeps the unbundled source loadable in headless smoke tests.
+            // `window`, never `activeWindow`: rita.min.js's tail assigns the bare global `RiTa` into the plugin's own realm (the main window), which a popout would not see.
             this.RiTa = window.RiTa || (typeof __ccLoadRita === "function" ? __ccLoadRita() : null);
             this.nlp = require("../lib/compromise.js");
             if (!this.RiTa) throw new Error("RiTa missing");
@@ -2142,7 +2153,7 @@ class Oracle {
             ["Anon", () => this.pushPlain(this.anonBag, this.data.anonTemplates, "cc-feed-bubble-anon")],
             ["Vip", () => this.pushVip()],
         ];
-        this.stops = beats.map(([kind, fire]) => randomInterval(() => this.range(kind), fire));
+        this.stops = beats.map(([kind, fire]) => randomInterval(this.view.containerEl.win, () => this.range(kind), fire));
         // React to typing (debounced); only VIP consults it.
         this.editRef = this.app.workspace.on("editor-change", (editor) => this.onEdit(editor));
     }
@@ -2151,7 +2162,7 @@ class Oracle {
         this.stops.forEach((stop) => stop());
         this.stops = [];
         if (this.editRef) { this.app.workspace.offref(this.editRef); this.editRef = null; }
-        if (this.editTimer != null) { window.clearTimeout(this.editTimer); this.editTimer = null; }
+        if (this.editTimer != null) { this.view.containerEl.win.clearTimeout(this.editTimer); this.editTimer = null; }
         this.context = null;
     }
     range(kind) {
@@ -2233,8 +2244,9 @@ class Oracle {
     // --- input → VIP context ---
     onEdit(editor) {
         if (!this.settings.oracleVipReactsToTyping) return;
-        if (this.editTimer != null) window.clearTimeout(this.editTimer);
-        this.editTimer = window.setTimeout(() => this.classify(editor), tuning().oracleDebounce);
+        const win = this.view.containerEl.win;
+        if (this.editTimer != null) win.clearTimeout(this.editTimer);
+        this.editTimer = win.setTimeout(() => this.classify(editor), tuning().oracleDebounce);
     }
     // Classify the current line to a VIP; store the match only if its confidence clears a multiple of the uniform (1/N) baseline, then pick the topic to echo (see below).
     classify(editor) {
@@ -2358,6 +2370,7 @@ class CompanionView extends ItemView {
             void this.plugin.saveDataFile("characterData", true);
     }
     // Icon-column action: open this plugin's settings tab.
+    // `app.setting` and its open()/openTabById() are UNDOCUMENTED — absent from obsidian.d.ts, so eslint-plugin-obsidianmd's no-unsupported-api would flag them. They are stable in practice and there is no public equivalent (nothing in the API opens a settings tab), so this is a deliberate exception, kept behind the truthiness guard below: if a future release drops or renames `setting`, the button silently no-ops instead of throwing.
     openPluginSettings() {
         const setting = this.app.setting;
         if (!setting)
@@ -2502,7 +2515,7 @@ class CompanionView extends ItemView {
         if (on === (this[handle] != null))
             return;
         if (on)
-            this[handle] = randomInterval(range, fire);
+            this[handle] = randomInterval(this.containerEl.win, range, fire);
         else {
             this[handle]();
             this[handle] = null;
