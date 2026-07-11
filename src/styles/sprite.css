@@ -50,14 +50,6 @@
     cursor: grabbing;
 }
 
-.cc-empty {
-    margin: auto;
-    padding: 16px;
-    color: var(--text-muted);
-    text-align: center;
-    font-size: var(--font-ui-small);
-}
- 
 /* Root stage: full-window strip along the bottom edge where characters walk. overflow:visible lets the bubble rise above the strip. */
 .cc-root-stage {
     position: fixed;

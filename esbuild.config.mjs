@@ -33,8 +33,9 @@ const STYLE_PARTS = [
   "aesthetics.css", // stream overlay tickers, bottom-bar slot, particles
 ];
 function buildStyles() {
+  const banner = "/* GENERATED FILE — built from src/styles/ by esbuild.config.mjs. Edit the parts there, never this file. */\n\n";
   const css = STYLE_PARTS.map((f) => fs.readFileSync("src/styles/" + f, "utf8")).join("");
-  fs.writeFileSync("styles.css", css);
+  fs.writeFileSync("styles.css", banner + css);
 }
 
 const ctx = await esbuild.context({
