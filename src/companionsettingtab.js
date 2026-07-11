@@ -41,6 +41,10 @@ const PILL_GRIDS = {
         entries: (t) => t.flagPills(AESTHETICS, t.plugin.settings.enabledAesthetics),
     },
 };
+// A slider/range labelled in a time unit ("sec"/"min") edits an ms-STORED setting: the base
+// helpers scale bounds and values through this map, so authoring stays in the readable unit
+// and the ms↔unit conversion has exactly one point. Any other unit ("%", "px") is label-only.
+const MS_PER_UNIT = { sec: 1000, min: 60000 };
 // The settings tab: a tab bar over pages, each page a row in the tab table (this.tabs) below.
 class CompanionSettingTab extends PluginSettingTab {
     constructor(app, plugin) {
@@ -141,8 +145,13 @@ class CompanionSettingTab extends PluginSettingTab {
     commit(save, rerender = false) {
         return save ? save() : this.plugin.saveSettings(rerender);
     }
-    // One slider setting: a native ".slider" over [min, max] stepped by step, with the live value shown to its LEFT (mirrors the dual-range row) and the unit carried in the name's brackets. get()/set() read/write the stored value; the ms sibling passes format/parse for the stored↔display conversion (identity here).
-    addSliderSetting(container, { name, desc, unit, get, set, min, max, step, save, rerender = false, format = (v) => v, parse = (v) => v, readout = (v) => String(v) }) {
+    // One slider setting: a native ".slider" over [min, max] stepped by step, with the live value shown to its LEFT (mirrors the dual-range row) and the unit carried in the name's brackets. The value is read/written through get()/set(), or `key` names a plugin-settings scalar directly. A "sec"/"min" unit means the stored value is ms (MS_PER_UNIT): bounds are authored in the display unit and format/parse default to the conversion; explicit format/parse/readout (the typewriter's string↔index map) still override.
+    addSliderSetting(container, { name, desc, unit, key, get, set, min, max, step = 1, save, rerender = false, format, parse, readout = (v) => String(v) }) {
+        const div = MS_PER_UNIT[unit] ?? 1;
+        get = get ?? (() => this.plugin.settings[key]);
+        set = set ?? ((v) => (this.plugin.settings[key] = v));
+        format = format ?? ((v) => v / div);
+        parse = parse ?? ((v) => v * div);
         const setting = new Setting(container).setName(unit ? name + " (" + unit + ")" : name);
         if (desc)
             setting.setDesc(desc);
@@ -157,8 +166,10 @@ class CompanionSettingTab extends PluginSettingTab {
         slider.addEventListener("input", () => paint());
         slider.addEventListener("change", async () => { set(parse(Number(slider.value))); await this.commit(save, rerender); });
     }
-    // One toggle setting: a boolean read through get()/set(), persisted on flip.
-    addToggleSetting(container, { name, desc, get, set, save, rerender = false }) {
+    // One toggle setting: a boolean read through get()/set() (or `key` naming a plugin-settings flag), persisted on flip.
+    addToggleSetting(container, { name, desc, key, get, set, save, rerender = false }) {
+        get = get ?? (() => this.plugin.settings[key]);
+        set = set ?? ((v) => (this.plugin.settings[key] = v));
         new Setting(container)
             .setName(name)
             .setDesc(desc)
@@ -170,7 +181,9 @@ class CompanionSettingTab extends PluginSettingTab {
         }));
     }
     // One text-input setting: a string read through get()/set() and persisted. set() owns any trimming and side effects (a pill relabel, a pill-grid rebuild); `configure(setting)` may decorate the row before the input lands (the character Name row adds its toggle icons). Commits on the native "change" (click away / Enter), NOT per keystroke — a save can re-render the open panel, which mustn't fire mid-typing.
-    addTextSetting(container, { name, desc, placeholder, get, set, save, rerender = false, configure }) {
+    addTextSetting(container, { name, desc, placeholder, key, get, set, save, rerender = false, configure }) {
+        get = get ?? (() => this.plugin.settings[key]);
+        set = set ?? ((v) => (this.plugin.settings[key] = v));
         const setting = new Setting(container).setName(name);
         if (desc)
             setting.setDesc(desc);
@@ -186,21 +199,27 @@ class CompanionSettingTab extends PluginSettingTab {
             });
         });
     }
-    // A dual-thumb range setting: two native ".slider" inputs stacked (both full-width, pointer ignored except on each thumb). get/set/min/max/step are all in ONE unit (the slider steps in it, values commit in it); `divisor` only scales the readout, so a slider that steps in ms can still show minutes (see addMsRangeSetting).
-    addRangeSetting(container, { name, desc, min, max, step, unit, divisor = 1, getMin, setMin, getMax, setMax }) {
+    // A dual-thumb range setting: two native ".slider" inputs stacked (both full-width, pointer ignored except on each thumb). The pair is read/written through getMin/setMin/getMax/setMax, or `minKey`/`maxKey` name two plugin-settings scalars directly. A "sec"/"min" unit means the stored pair is ms (MS_PER_UNIT): min/max/step are authored in the display unit and scaled to ms bounds here — the slider steps and commits in ms, only the readout divides back.
+    addRangeSetting(container, { name, desc, min, max, step = 1, unit, minKey, maxKey, getMin, setMin, getMax, setMax }) {
+        const div = MS_PER_UNIT[unit] ?? 1;
+        const s = this.plugin.settings;
+        getMin = getMin ?? (() => s[minKey]);
+        setMin = setMin ?? ((v) => (s[minKey] = v));
+        getMax = getMax ?? (() => s[maxKey]);
+        setMax = setMax ?? ((v) => (s[maxKey] = v));
         const setting = new Setting(container).setName(unit ? name + " (" + unit + ")" : name);
         if (desc)
             setting.setDesc(desc);
         const wrap = setting.controlEl.createDiv({ cls: "cc-range" });
         const label = wrap.createSpan({ cls: "cc-range-label" });
         const sliders = wrap.createDiv({ cls: "cc-range-sliders" });
-        const attr = { type: "range", min: String(min), max: String(max), step: String(step), "data-ignore-swipe": "true" };
+        const attr = { type: "range", min: String(min * div), max: String(max * div), step: String(step * div), "data-ignore-swipe": "true" };
         const lo = sliders.createEl("input", { cls: "slider cc-range-lo", attr });
         const hi = sliders.createEl("input", { cls: "slider cc-range-hi", attr });
         lo.value = String(getMin());
         hi.value = String(getMax());
         const paint = () => {
-            label.setText((Number(lo.value) / divisor) + "–" + (Number(hi.value) / divisor));
+            label.setText((Number(lo.value) / div) + "–" + (Number(hi.value) / div));
         };
         // Clamp the dragged thumb against the other so they never cross, commit the value, repaint live; persist once on release ("change"), like the single slider.
         const onInput = (self, other, isLo, commit) => () => {
@@ -216,27 +235,6 @@ class CompanionSettingTab extends PluginSettingTab {
         lo.addEventListener("change", persist);
         hi.addEventListener("change", persist);
         paint();
-    }
-    // A time-interval dual-range for a setting stored in ms. The slider steps and commits in ms — get/set are raw passthroughs to the two ms keys, no per-value arithmetic — and only the readout divides by the unit (min→60000, sec→1000). min/max/step are authored in that display unit (readable: 1–60 min) and scaled to ms bounds once, here: the single point ms↔unit conversion lives.
-    addMsRangeSetting(container, { name, desc, unit, min, max, step = 1, minKey, maxKey }) {
-        const div = unit === "sec" ? 1000 : 60000;
-        const s = this.plugin.settings;
-        this.addRangeSetting(container, {
-            name, desc, unit, divisor: div,
-            min: min * div, max: max * div, step: step * div,
-            getMin: () => s[minKey], setMin: (v) => (s[minKey] = v),
-            getMax: () => s[maxKey], setMax: (v) => (s[maxKey] = v),
-        });
-    }
-    // Single-thumb time slider for an ms-stored setting, authored + shown in minutes/seconds — the value-of-one sibling of addMsRangeSetting. Delegates to addSliderSetting with format/parse doing the single-point ms↔unit conversion (div = 1000 sec / 60000 min); the unit rides in the name's brackets.
-    addMsSliderSetting(container, { name, desc, unit, min, max, step = 1, key }) {
-        const div = unit === "sec" ? 1000 : 60000;
-        const s = this.plugin.settings;
-        this.addSliderSetting(container, {
-            name, desc, unit, min, max, step,
-            get: () => s[key], set: (v) => (s[key] = v),
-            format: (v) => v / div, parse: (v) => v * div,
-        });
     }
     // The one textarea scaffold: raw text by default (value stored verbatim — gift emojis, mail bodies); the `format`/`parse` overrides below turn it into the line-list and map flavours.
     addTextarea(container, { get, set, save, rows = 8, format = (v) => v, parse = (v) => v }) {
@@ -317,17 +315,15 @@ class CompanionSettingTab extends PluginSettingTab {
         this.addToggleSetting(c, {
             name: "Wander when idle",
             desc: "When left alone, the character idles on its own: shifting weight, pacing, looking around, stretching, dozing off, fidgeting, and occasionally wandering off one side and back.",
-            get: () => this.plugin.settings.idleEnabled,
-            set: (v) => (this.plugin.settings.idleEnabled = v),
+            key: "idleEnabled",
         });
         this.addSliderSetting(c, {
             name: "Chatter chance", unit: "%",
             desc: "How often an idle moment triggers a quote instead of a movement. 0 = never speak on its own.",
             min: 0, max: 100, step: 5,
-            get: () => this.plugin.settings.chatterChance,
-            set: (v) => (this.plugin.settings.chatterChance = v),
+            key: "chatterChance",
         });
-        this.addMsSliderSetting(c, {
+        this.addSliderSetting(c, {
             name: "Sleep after",
             desc: "How long the character waits until it dozes off and dims. Click to wake the character. Will not sleep while streaming.",
             unit: "min", min: 1, max: 60,
@@ -342,14 +338,12 @@ class CompanionSettingTab extends PluginSettingTab {
             name: "Surprise chance", unit: "%",
             desc: "How often a click triggers an animation instead of a quote. 0 = always quote. 100 = always animate.",
             min: 0, max: 100, step: 5,
-            get: () => this.plugin.settings.surpriseChance,
-            set: (v) => (this.plugin.settings.surpriseChance = v),
+            key: "surpriseChance",
         });
         this.addToggleSetting(c, {
             name: "Small bob on quote",
             desc: "Whether the character bobs on a normal (quote) click.",
-            get: () => this.plugin.settings.animateOnQuote,
-            set: (v) => (this.plugin.settings.animateOnQuote = v),
+            key: "animateOnQuote",
         });
         new Setting(c)
             .setName("Allowed surprise animations")
@@ -363,11 +357,10 @@ class CompanionSettingTab extends PluginSettingTab {
             name: "Sprite max height", unit: "px",
             desc: "Width scales to match.",
             min: 100, max: 500, step: 20,
-            get: () => this.plugin.settings.sidebarSpriteMaxHeight,
-            set: (v) => (this.plugin.settings.sidebarSpriteMaxHeight = v),
+            key: "sidebarSpriteMaxHeight",
             rerender: true,
         });
-        this.addMsSliderSetting(c, {
+        this.addSliderSetting(c, {
             name: "Quote duration",
             desc: "Visible time for a full line of speech. Scaled to the bubble width, so shorter quotes clear sooner, and longer ones linger.",
             unit: "sec", min: 1, max: 5,
@@ -380,8 +373,7 @@ class CompanionSettingTab extends PluginSettingTab {
             name: "Quote typewriter",
             desc: "Off shows the whole line at once. Slow and Fast reveal it sentence by sentence, typewriter-style, at their own per-character speed.",
             min: 0, max: 2, step: 1,
-            get: () => this.plugin.settings.quoteTypewriter,
-            set: (v) => (this.plugin.settings.quoteTypewriter = v),
+            key: "quoteTypewriter",
             format: (v) => Math.max(0, typewriterSteps.indexOf(v)),
             parse: (n) => typewriterSteps[n],
             readout: (n) => typewriterLabels[n],
@@ -395,15 +387,13 @@ class CompanionSettingTab extends PluginSettingTab {
             name: "Sprite max height", unit: "px",
             desc: "Width scales to match.",
             min: 100, max: 500, step: 20,
-            get: () => this.plugin.settings.rootSpriteMaxHeight,
-            set: (v) => (this.plugin.settings.rootSpriteMaxHeight = v),
+            key: "rootSpriteMaxHeight",
         });
         this.addSliderSetting(c, {
             name: "Walking speed", unit: "px/sec",
             desc: "Base speed for walking along the bottom. Each character scales this with its own walking speed.",
             min: 10, max: 50, step: 2,
-            get: () => this.plugin.settings.rootWalkSpeed,
-            set: (v) => (this.plugin.settings.rootWalkSpeed = v),
+            key: "rootWalkSpeed",
         });
         new Setting(c)
             .setName("Characters in root")
@@ -417,7 +407,7 @@ class CompanionSettingTab extends PluginSettingTab {
     renderStreamTab(c) {
         this.tabIntro(c, "The livestreaming that comes with scrolling comments.");
         new Setting(c).setName("Stream mode").setHeading();
-        this.addMsRangeSetting(c, {
+        this.addRangeSetting(c, {
             name: "Background change interval",
             desc: "The background switches after a random time in this range.",
             unit: "min", min: 1, max: 60,
@@ -439,7 +429,7 @@ class CompanionSettingTab extends PluginSettingTab {
             .setName("Aesthetics")
             .setDesc("Click an element to turn it on or off. Dimmed means off. Can overlay the stream bg.");
         this.mountPillGrid(c, "aesthetic");
-        this.addMsRangeSetting(c, {
+        this.addRangeSetting(c, {
             name: "Comment interval",
             desc: "A new comment appears after a random time in this range.",
             unit: "sec", min: 5, max: 30, step: 5,
@@ -449,8 +439,7 @@ class CompanionSettingTab extends PluginSettingTab {
             name: "Visible comment history",
             desc: "How many comment bubbles stay on screen.",
             min: 1, max: 15, step: 1,
-            get: () => this.plugin.settings.streamHistoryCount,
-            set: (v) => (this.plugin.settings.streamHistoryCount = v),
+            key: "streamHistoryCount",
         });
         new Setting(c)
             .setName("Comment sets")
@@ -490,18 +479,16 @@ class CompanionSettingTab extends PluginSettingTab {
             name: "System title",
             desc: 'The channel brand, used as $system. Blank falls back to "' + ORACLE_SYS_FALLBACK + '".',
             placeholder: ORACLE_SYS_FALLBACK,
-            get: () => this.plugin.settings.oracleSystemName,
-            set: (v) => (this.plugin.settings.oracleSystemName = v),
+            key: "oracleSystemName",
         });
         this.addTextSetting(c, {
             name: "Patron origin",
             desc: 'The audience species or status, used as $patron. Comma-separate several to draw one at random each time (e.g. "Demon, Angel"). Give a custom plural in brackets (e.g. "Persona (Personae)"). Blank falls back to "' + ORACLE_PATRON_FALLBACK + '".',
             placeholder: ORACLE_PATRON_FALLBACK,
-            get: () => this.plugin.settings.oraclePatronName,
-            set: (v) => (this.plugin.settings.oraclePatronName = v),
+            key: "oraclePatronName",
         });
         // Three fully independent interval ranges (authored seconds, stored ms).
-        const interval = (name, kind) => this.addMsRangeSetting(c, {
+        const interval = (name, kind) => this.addRangeSetting(c, {
             name, desc: "A new message of this type appears after a random time in this range.",
             unit: "sec", min: 5, max: 180, step: 5,
             minKey: "oracle" + kind + "MinMs", maxKey: "oracle" + kind + "MaxMs",
@@ -512,8 +499,7 @@ class CompanionSettingTab extends PluginSettingTab {
         this.addToggleSetting(c, {
             name: "VIP reacts to typing",
             desc: "When on, a VIP beat reacts to what you've just typed, if matching its topic; otherwise raises one of its own topics. When off, VIPs are always ambient.",
-            get: () => this.plugin.settings.oracleVipReactsToTyping,
-            set: (v) => (this.plugin.settings.oracleVipReactsToTyping = v),
+            key: "oracleVipReactsToTyping",
         });
         const saveOracle = () => this.plugin.saveDataFile("oracleData");
         new Setting(c)
@@ -592,7 +578,7 @@ class CompanionSettingTab extends PluginSettingTab {
     renderMailTab(c) {
         this.tabIntro(c, "The period emailing that directly address the character.");
         new Setting(c).setName("Mail mode").setHeading();
-        this.addMsRangeSetting(c, {
+        this.addRangeSetting(c, {
             name: "Mail interval",
             desc: "A new mail appears after a random time in this range.",
             unit: "min", min: 1, max: 60,
@@ -617,7 +603,7 @@ class CompanionSettingTab extends PluginSettingTab {
     renderBlogTab(c) {
         this.tabIntro(c, "The ambient microblogging that never mentions the character.");
         new Setting(c).setName("Blog mode").setHeading();
-        this.addMsRangeSetting(c, {
+        this.addRangeSetting(c, {
             name: "Blog interval",
             desc: "A new blog appears after a random time in this range.",
             unit: "min", min: 0.5, max: 30, step: 0.5,
@@ -643,7 +629,7 @@ class CompanionSettingTab extends PluginSettingTab {
     renderNewsTab(c) {
         this.tabIntro(c, "The rolling news that reports on the character.");
         new Setting(c).setName("News mode").setHeading();
-        this.addMsRangeSetting(c, {
+        this.addRangeSetting(c, {
             name: "News interval",
             desc: "The next news beat — a chyron pass or a feed bubble, whichever face runs — comes after a random time in this range.",
             unit: "min", min: 0.5, max: 30, step: 0.5,
@@ -652,8 +638,7 @@ class CompanionSettingTab extends PluginSettingTab {
         this.addToggleSetting(c, {
             name: "Feed instead of chyron",
             desc: "Off: headlines scroll across the bottom-bar chyron, several per pass. On: each beat drops one headline into the comment feed as a bubble instead.",
-            get: () => this.plugin.settings.newsToFeed,
-            set: (v) => (this.plugin.settings.newsToFeed = v),
+            key: "newsToFeed",
         });
         new Setting(c).setName("Message list").setHeading();
         new Setting(c)
