@@ -85,26 +85,34 @@ const SIDEBAR_BUTTONS = [
     { icon: "sparkles", label: "Toggle oracle mode", run: (v) => v.toggleMode("oracle"), active: (v) => v.plugin.settings.oracleEnabled },
     { icon: "mail", label: "Toggle mail mode", run: (v) => v.toggleMode("mail"), active: (v) => v.plugin.settings.mailEnabled },
     { icon: "at-sign", label: "Toggle blog mode", run: (v) => v.toggleMode("blog"), active: (v) => v.plugin.settings.blogEnabled },
+    { icon: "newspaper", label: "Toggle news mode", run: (v) => v.toggleMode("news"), active: (v) => v.plugin.settings.newsEnabled },
 ];
-// Feed sources: one row drives bag/stop/timer/sync. pool = draw list (non-repeat via Bag); push = one beat. RiScript-templated.
+// Feed sources: one row drives bag/stop/timer/sync. pool = draw list (non-repeat via Bag); push = one beat. RiScript-templated. Naming convention (load-bearing — the view wires each row through it): a source's interval settings are `<key>MinMs`/`<key>MaxMs`, its enable flag `<key>Enabled` (all data.json scalars), and the view auto-creates `<key>Bag`/`<key>Stop` per row.
 const FEED_SOURCES = [
-    // Stream comments: every enabled set's lines pooled flat (a draw is weighted by line count).
+    // Stream comments: every enabled set's lines pooled flat (a draw is weighted by line count). Each item carries its OWN set so the beat resolves the right per-set vars — provenance rides the pool, never re-derived by search.
     {
-        key: "stream", minKey: "streamCommentMinMs", maxKey: "streamCommentMaxMs",
-        pool: (v) => v.plugin.streamData.commentSets.filter((cs) => cs.enabled).flatMap((cs) => cs.comments),
+        key: "stream",
+        pool: (v) => v.plugin.streamData.commentSets.filter((cs) => cs.enabled)
+            .flatMap((cs) => cs.comments.map((text) => ({ id: cs.id + "\u0000" + text, set: cs, text }))),
         push: (v, item) => v.pushComment(item),
     },
     // Mail: every enabled Title/From/To/Content template.
     {
-        key: "mail", minKey: "mailMinMs", maxKey: "mailMaxMs",
+        key: "mail",
         pool: (v) => v.plugin.mailData.mailTemplates.filter((m) => m.enabled),
         push: (v, tpl) => v.pushMail(tpl),
     },
     // Blog: the flat microblog line list — no per-line enable flag, the whole list is the pool.
     {
-        key: "blog", minKey: "blogMinMs", maxKey: "blogMaxMs",
+        key: "blog",
         pool: (v) => v.plugin.blogData.messages,
         push: (v, raw) => v.pushBlog(raw),
+    },
+    // News: a flat headline list (blog's shape), but evaluated against the character context + news constants (mail's recipe). This ONE timer and ONE bag drive news mode's two mutually exclusive faces — a beat either pushes a single headline bubble or hands the chyron a multi-headline strip drawn from the same rotation; pushNews routes on the face switch (newsToFeed).
+    {
+        key: "news",
+        pool: (v) => v.plugin.newsData.messages,
+        push: (v, raw) => v.pushNews(raw),
     },
 ];
 // Stream special effects: each enabled key adds a class to .cc-anchor. Numbers + descriptors live in styles.css; buildEffect reads them to inject particle/layer nodes.
@@ -117,7 +125,7 @@ const SPECIAL_EFFECTS = [
     { key: "rain", label: "Rain" },
 ];
 const SPECIAL_EFFECT_KEYS = SPECIAL_EFFECTS.map((e) => e.key);
-// Stream aesthetics: in-panel livestream overlay. Each key toggles a piece (tickers, status, react bar). Numbers in styles.css; motion via WAAPI. Add: row + DOM in buildAesthetics + CSS.
+// Stream aesthetics: in-panel livestream overlay. Each key toggles a piece — the four corner tickers plus "react", stream mode's bottom-slot occupant (see SLOT_OCCUPANTS). Numbers in styles.css; motion via WAAPI. Add a ticker: row + DOM in Aesthetics.build + CSS.
 const AESTHETICS = [
     { key: "uptime", label: "Uptime" },
     { key: "viewer", label: "Viewer" },
@@ -126,6 +134,16 @@ const AESTHETICS = [
     { key: "react", label: "React" },
 ];
 const AESTHETIC_KEYS = AESTHETICS.map((a) => a.key);
+// Bottom-bar slot occupants — the region above the panel's bottom edge holds exactly ONE of these at a time. Row order is the override order: of the rows whose wants(aes) holds, the LAST wins (Stream → Roleplay → News → Program, so an airing Program overrides News overrides Roleplay overrides Stream). build(aes, slotEl) mounts the occupant's DOM and MUST return a teardown that cancels every WAAPI animation/timer it started (the no-drift contract, same as buildEffect). liveOnly rows are additionally torn down while the panel isn't live and rebuilt fresh on return (the not-preserved side of the blur contract); rows without it persist across a blur like the sprite.
+const SLOT_OCCUPANTS = [
+    // Stream: the fake react bar (comment box + gift/like), gated by its own aesthetics pill. No ambient animation, so it survives a blur (a half-typed comment isn't wiped).
+    { key: "stream", wants: (a) => a.settings.streamEnabled && !!a.settings.enabledAesthetics.react, build: (a, slot) => a.buildReactBar(slot), liveOnly: false },
+    // (Roleplay/game mode slots in between stream and news when it lands.)
+    // News: the headline chyron — news mode's default face (the feed switch stands it down in favour of feed bubbles). Pure display with NO timer and NO content of its own: the news feed beat hands it each pass's finished strip (see chyronPass / the view's chyronStrip). Torn down on blur (its WAAPI scroll must not outlive liveness) and rebuilt hidden on return.
+    { key: "news", wants: (a) => a.settings.newsEnabled && !a.settings.newsToFeed, build: (a, slot) => a.buildChyron(slot), liveOnly: true },
+    // Program: while an airing is live, its content plays here one line at a time (each held per the speech-bubble rule); the sequence ends the airing. Its timer is torn down on blur (the airing is cleared then too — see the view's sync/endProgram).
+    { key: "program", wants: (a) => !!a.view.program, build: (a, slot) => a.buildProgram(slot), liveOnly: true },
+];
 // {name: bool} map over `names`, each from `src` if a boolean there, else `def`.
 const boolMap = (names, src = {}, def = true) => Object.fromEntries(names.map((n) => [n, typeof src[n] === "boolean" ? src[n] : def]));
 // A string list: keep the string items, drop everything else.
@@ -194,6 +212,13 @@ const MAIL_SCHEMA = [
     { key: "to", coerce: str },
     { key: "content", coerce: str },
     { key: "enabled", coerce: bool(true) },
+];
+// Program: a scheduled full-panel "broadcast". Lives in program-data.json. 'label' is the admin-only pill label. 'background' is a plain stream-bg-style image field (comma-separated paths/emojis or a folder; drawn once per airing, no swap, no RiScript) — it hijacks the stream backdrop and hides the sprite. 'content' is a RiScript, multi-line script shown one line at a time as a bottom-slot bubble (SLOT_OCCUPANTS); the airing ENDS when the last line's hold elapses. 'schedule' is the airing slider's raw value: 0 = off, 1..59 = that minute past every hour (while the panel is live), 60 = the ":00" step — the top of the hour, stored as 60 so it can't collide with off. The scheduler matches `schedule % 60` against the clock minute.
+const PROGRAM_SCHEMA = [
+    { key: "label", coerce: str },
+    { key: "background", coerce: str },
+    { key: "content", coerce: str },
+    { key: "schedule", coerce: num(0) },
 ];
 // Normalise a loaded object to exactly its schema fields (drop unknowns), keep/mint its id. newItem is the inverse: a fresh item from the same defaults, with optional overrides.
 function coerceItem(schema, raw) {
@@ -275,6 +300,28 @@ const SEED_BLOG = {
         "about to see my cousin's wedding!!!",
     ],
 };
+const SEED_NEWS = {
+    constants: { source: ["city officials", "unnamed officials", "eyewitnesses", "police sources"], district: ["downtown", "the harbor district", "the old quarter", "Gateway Bridge"] },
+    messages: [
+        "[BREAKING] $name spotted $deed.ing() near $district, $source confirm",
+        "$name, $epithet, declined to comment on $topic this morning",
+        "[POLL] 6 in 10 residents now trust a $role more than city hall",
+        "[WEATHER] clear skies over $district, no thanks to anyone in particular",
+        "[EXCLUSIVE] $source say $name has been $deed.ing() for months",
+        "Experts warn $topic could reshape the city within a year",
+        "[TRAFFIC] expect delays around $district while $name is busy $deed.ing()",
+        "[OPINION] we need to talk about $topic, and about $name",
+        "[MARKETS] closed [up | down | flat] after rumors about $topic",
+        "[TONIGHT] an in-depth look at the $role everyone keeps talking about",
+    ],
+};
+const SEED_PROGRAM = {
+    programs: [{
+        id: "seed-program-1", label: "Evening news", schedule: 0,
+        background: "📺, 🌃",
+        content: "We interrupt your evening for a special bulletin.\nReports place $name near [downtown | the harbor] tonight.\nMore on this story as it develops. Back to you.",
+    }],
+};
 // Sibling data files (kept out of data.json). One row per file drives generic load/save. Fields: prop (plugin field); file (sibling filename); shape (raw)=>in-memory object; create (write when genuinely MISSING, never on corrupt); seed (starter content on first run — small defaults inline, bulky via default-*.json); afterSave (side effects: char save -> repaint views+stage; Oracle save -> retrain classifiers).
 const DATA_FILES = [
     {
@@ -335,6 +382,26 @@ const DATA_FILES = [
             };
         },
     },
+    {
+        // News mirrors blog's file shape (flat headline list + constants map); unlike blog its lines also see the character context (see newsCtx). One pool for both news faces (feed beat / chyron).
+        prop: "newsData", file: "news-data.json", create: false, seed: () => SEED_NEWS,
+        shape: (raw) => {
+            raw = raw || {};
+            return {
+                messages: strList(raw.messages),
+                constants: strMap(raw.constants),
+            };
+        },
+    },
+    {
+        // Program is a scheduled backdrop takeover, not a feed source: a pill-edited list of programs (PROGRAM_SCHEMA), each with its own airing minute. afterSave runs the shared light reconcile, which re-times every open panel's airing check in place (a schedule edit must reach the scheduler).
+        prop: "programData", file: "program-data.json", create: false, seed: () => SEED_PROGRAM,
+        shape: (raw) => {
+            raw = raw || {};
+            return { programs: (Array.isArray(raw.programs) ? raw.programs : []).map((p) => coerceItem(PROGRAM_SCHEMA, p)) };
+        },
+        afterSave: (p) => p.applyChange(),
+    },
 ];
 const DATA_FILE_BY_PROP = Object.fromEntries(DATA_FILES.map((d) => [d.prop, d]));
 const DEFAULT_SETTINGS = {
@@ -355,9 +422,9 @@ const DEFAULT_SETTINGS = {
     streamBackgrounds: "🌃",
     streamBgMinMs: 600000,
     streamBgMaxMs: 1200000,
-    // Stored ms between comment bubbles, picked at random in [min, max].
-    streamCommentMinMs: 10000,
-    streamCommentMaxMs: 20000,
+    // Stored ms between comment bubbles, picked at random in [min, max]. (Every feed source's interval pair follows the `<key>MinMs`/`<key>MaxMs` convention — loadSettings migrates the old streamComment* names.)
+    streamMinMs: 10000,
+    streamMaxMs: 20000,
     // Comment bubbles kept on screen before the oldest drops.
     streamHistoryCount: 6,
     // ---- Oracle mode (sidebar panel) ---- A second feed mode: three message types (SYSTEM / ANON / VIP) generated locally with RiTa + compromise + whichx. Bulky content lives in oracle-data.json; only scalars here.
@@ -382,6 +449,12 @@ const DEFAULT_SETTINGS = {
     blogEnabled: false,
     blogMinMs: 60000, // 1 min
     blogMaxMs: 180000, // 3 min
+    // ---- News mode (sidebar panel) ---- A fifth feed source: one-line headlines RiScript-filled against the shown character's context + news-data.json's constants (the mail recipe on the blog shape). One beat timer (a standard feed-source interval), two mutually exclusive faces: the bottom-slot chyron (default; each beat cues one pass — see SLOT_OCCUPANTS) or single comment-feed bubbles. Bulky content lives in news-data.json.
+    newsEnabled: false,
+    newsMinMs: 120000, // 2 min
+    newsMaxMs: 360000, // 6 min
+    // The face switch. Off (default): each news beat cues a chyron pass. On: each beat pushes a headline into the comment feed instead, and the chyron stands down.
+    newsToFeed: false,
     // ---- Miscellaneous (stream overlay fonts + gift emojis) ---- CSS font-family strings (used verbatim), empty = keep the styles.css defaults.
     commentFont: "",       // overrides --cc-stream-font on the comment feed bubbles
     giftEmojiFont: "",     // font-family for the rained gift emojis
@@ -445,6 +518,17 @@ function randomInterval(win, range, fn) {
     tick();
     return () => { if (timer != null) win.clearTimeout(timer); };
 }
+// Reconcile a named self-rescheduling timer to on/off (idempotent — a live timer is left alone). The stop handle lives at host[handle]; range() yields {lo,hi}, fire() runs one tick. The one on/off gate for every randomInterval owner (view feed sources / background cycle, aesthetics tickers).
+function reconcileTimer(host, win, handle, on, range, fire) {
+    if (on === (host[handle] != null))
+        return;
+    if (on)
+        host[handle] = randomInterval(win, range, fire);
+    else {
+        host[handle]();
+        host[handle] = null;
+    }
+}
 // Resolve a vault-relative path (or bare unique filename) to an image URL, or null. `app` is threaded in from a Component caller — never the discouraged global, and never `this.app`: these are free functions, so under "use strict" `this` is undefined here.
 function resolveSpriteUrl(app, path) {
     let file = app.vault.getAbstractFileByPath(path);
@@ -480,6 +564,8 @@ function resolvePathList(app, paths) {
         .map((p) => isEmoji(p) ? emojiUrl(p) : resolveSpriteUrl(app, p))
         .filter((u) => u !== null);
 }
+// Stable identity for a bag item: an object by its id (falling back to its JSON), anything else by string value. Drives both the reshuffle signature and the don't-repeat-the-last-draw check, so object items (rebuilt fresh on every pool call) compare by value, never by reference.
+const bagKey = (item) => item && typeof item === "object" ? (item.id ?? JSON.stringify(item)) : String(item);
 // Non-repeating random picker: draws every item once before repeating; reshuffles when the queue empties or the source list changes.
 class Bag {
     constructor() {
@@ -490,19 +576,18 @@ class Bag {
     next(items) {
         if (!items || items.length === 0)
             return null;
-        const signature = items.map((item) =>
-    item && typeof item === "object" ? (item.id ?? JSON.stringify(item)) : String(item)
-).join("\u0000");
+        const signature = items.map(bagKey).join("\u0000");
         // Reshuffle on a list change or an empty queue; else keep draining.
         if (signature !== this.signature || this.queue.length === 0) {
             this.signature = signature;
             this.queue = shuffle(items.slice());
             // Don't let a fresh shuffle repeat the item we just drew.
-            if (this.queue.length > 1 && this.queue[0] === this.last)
+            if (this.queue.length > 1 && bagKey(this.queue[0]) === this.last)
                 this.queue.push(this.queue.shift());
         }
-        this.last = this.queue.shift();
-        return this.last;
+        const drawn = this.queue.shift();
+        this.last = bagKey(drawn);
+        return drawn;
     }
 }
 const VIEW_TYPE_COMPANION = "character-companion-view";
@@ -698,6 +783,14 @@ function spriteTopInsetFraction(url) {
     });
     _spriteInsetCache.set(url, p);
     return p;
+}
+// How long a fully-revealed bubble of `text` holds, scaled to its content so short lines clear sooner and long (wrapped) ones linger. `budget` (quoteDurationMs) is spent over exactly one full line: chars-per-full-line = bubble max-width ÷ avg glyph width (--cc-quote-char-em × the bubble's own font-size, so it tracks max-width and theme scale), and the per-char rate falls out as budget ÷ that. Floored at --cc-quote-hold-min so a one-word burst still registers. The one staying-time rule, shared by the walker's speech bubble and the program-slot bubble.
+function bubbleHoldMs(bubbleEl, budget, text) {
+    const T = tuning();
+    const fontPx = parseFloat(activeWindow.getComputedStyle(bubbleEl).fontSize) || 13;
+    const charsPerLine = T.bubbleMaxWidth / (fontPx * T.quoteCharEm);
+    const perChar = budget / charsPerLine;
+    return Math.max(T.quoteHoldMin, perChar * text.length);
 }
 // Split a quote into the sentences a walker reveals as consecutive bubbles (quoteTypewriter only). Scans runs of terminators and closes a sentence only where terminatorBreaks says so. A merge pass folds runs shorter than --cc-quote-min-words words together, so a burst like "Whoa! Whoa! Whoa!" reads as one. Pure/static: unit-testable headless (pass an explicit min via mergeShortSentences).
 function splitQuote(text) {
@@ -1323,13 +1416,11 @@ class Walker {
         if (name)
             this.beginAnim(ANIM_BY_NAME[name], true);
     }
-    // Speak one of the character's lines through the one bubble. With quoteTypewriter "slow"/"fast", split into sentences typed out consecutively (the CommentFeed "push a part" idea, but sequential — one held at a time, not stacked); "off", the whole line is one chunk shown at once. No-op with no bubble/nothing to say; a blank/punctuation-only line yields no chunks and is skipped.
-    speak() {
-        const quotes = this.character.quotes;
-        if (!this.bubbleEl || quotes.length === 0)
+    // Speak one line through the one bubble — by default one of the character's quotes (drawn without repeats); a caller may pass an explicit `line` (a rolled table result, a fed message) to voice arbitrary text through the identical pipeline. With quoteTypewriter "slow"/"fast", split into sentences typed out consecutively (the CommentFeed "push a part" idea, but sequential — one held at a time, not stacked); "off", the whole line is one chunk shown at once. No-op with no bubble/nothing to say; a blank/punctuation-only line yields no chunks and is skipped.
+    speak(line = this.quoteBag.next(this.character.quotes)) {
+        if (!this.bubbleEl || !line)
             return;
         this.clearBubbleTimer();
-        const line = this.quoteBag.next(quotes);
         const chunks = this.settings.quoteTypewriter !== "off" ? splitQuote(line) : [line.trim()].filter(Boolean);
         if (chunks.length === 0)
             return;
@@ -1337,7 +1428,7 @@ class Walker {
         this.bubbleEl.addClass("cc-bubble-visible");
         this.playChunk(chunks, 0);
     }
-    // Reveal chunk `idx` (typed out when streaming, dropped in whole when not), hold it for its length-scaled duration (see quoteHoldMs), then advance to the next chunk or hide after the last. Each chunk holds for its own content, so a multi-sentence stream runs proportionally longer.
+    // Reveal chunk `idx` (typed out when streaming, dropped in whole when not), hold it for its length-scaled duration (bubbleHoldMs — the shared staying-time rule, spending quoteDurationMs over this bubble), then advance to the next chunk or hide after the last. Each chunk holds for its own content, so a multi-sentence stream runs proportionally longer.
     playChunk(chunks, idx) {
         const hold = () => {
             this.bubbleTimer = this.win.setTimeout(() => {
@@ -1345,19 +1436,11 @@ class Walker {
                     this.playChunk(chunks, idx + 1);
                 else
                     this.bubbleEl.removeClass("cc-bubble-visible");
-            }, this.quoteHoldMs(chunks[idx]));
+            }, bubbleHoldMs(this.bubbleEl, this.settings.quoteDurationMs, chunks[idx]));
         };
         if (this.settings.quoteTypewriter !== "off")
             this.typeOut(chunks[idx], this.wrapBreaks(chunks[idx]), 0, hold);
         else { this.bubbleEl.setText(chunks[idx]); hold(); }
-    }
-    // How long a fully-revealed bubble holds, scaled to its content so short lines clear sooner and long (wrapped) ones linger. The quoteDurationMs SETTING is spent over exactly one full line: chars-per-full-line = bubble max-width ÷ avg glyph width (--cc-quote-char-em × the bubble's own font-size, so it tracks max-width and theme scale), and the per-char rate falls out as setting ÷ that. Floored at --cc-quote-hold-min so a one-word burst still registers. Shared by both surfaces and both typewriter states.
-    quoteHoldMs(text) {
-        const T = tuning();
-        const fontPx = parseFloat(activeWindow.getComputedStyle(this.bubbleEl).fontSize) || 13;
-        const charsPerLine = T.bubbleMaxWidth / (fontPx * T.quoteCharEm);
-        const perChar = this.settings.quoteDurationMs / charsPerLine;
-        return Math.max(T.quoteHoldMin, perChar * text.length);
     }
     // Where the bubble will wrap `text` — the char index each visual line after the first begins at. Measured on the real bubble itself: set to the full text and read synchronously, then emptied by the reveal before the next paint, so the full line never flashes and the breaks are the browser's own by construction. typeOut applies them as hard breaks while revealing, which lets a word sit on its final line from its first character instead of growing on one line and jumping to the next.
     wrapBreaks(text) {
@@ -1863,6 +1946,13 @@ function renderInline(el, text) {
         el.createSpan({ cls: seg.slice(0, sep), text: seg.slice(sep + 1) });
     });
 }
+// Split a news headline on its one authored structural token: an optional leading [SECTION] label (the bracketed group may hold spaces), the rest is the body. Only that leading group is structural — a later [a | b] stays an ordinary RiScript choice in the body — so the parse mirrors pushBlog's author/tags split. Shared by the feed beat (which styles the section) and the chyron (body only, section dropped). Returns { section, body }; section "" when the line has no leading bracket group.
+function parseNewsLine(raw) {
+    const m = /^\s*\[([^\]]*)\]\s*/.exec(raw || "");
+    return m
+        ? { section: m[1].trim(), body: raw.slice(m[0].length).trim() }
+        : { section: "", body: (raw || "").trim() };
+}
 // Chat overlay: fixed element pinned to root-split corner nearest the panel. Owns no timer/content — exposes push() for independent sources. Newest at corner, older bump away.
 class CommentFeed {
     constructor(view) {
@@ -1935,6 +2025,297 @@ class CommentFeed {
         const limit = Math.max(1, this.settings.streamHistoryCount);
         while (this.el.childElementCount > limit)
             (top ? this.el.lastElementChild : this.el.firstElementChild).remove();
+    }
+}
+/* ---------------- aesthetics overlay (sidebar) ---------------- */
+// The in-panel overlay riding the stream anchor: the four corner tickers, the bottom-bar slot (one SLOT_OCCUPANTS row at a time — react bar / news chyron), and the particle layer. A sibling of CommentFeed: the view owns liveness and calls sync(); this owns its DOM, timers, and slot occupant. Rebuilt per panel render (build/teardown); the two ticker counters live on the instance so they survive a blur.
+class Aesthetics {
+    constructor(view) {
+        this.view = view;
+        this.plugin = view.plugin;
+        // DOM refs (null while unbuilt): root, slot, fx layer, per-key ticker pills + text spans.
+        this.els = null;
+        this.win = null;
+        // The two sync-gated tickers' stop handles + live counters (uptime seconds, viewer count).
+        this.uptimeStop = null;
+        this.uptimeS = 0;
+        this.viewerStop = null;
+        this.viewerCount = 0;
+        // The active SLOT_OCCUPANTS row's key + its teardown (null = slot empty).
+        this.slotKey = null;
+        this.slotTeardown = null;
+        // The pass hook the news beat cues with a lazy strip builder (set by buildChyron while the chyron occupies the slot, null otherwise — a beat landing with no chyron is simply skipped).
+        this.chyronPass = null;
+    }
+    get settings() { return this.plugin.settings; }
+    // Reconcile one of this overlay's named timers — see reconcileTimer.
+    syncTimer(handle, on, range, fire) {
+        reconcileTimer(this, this.win, handle, on, range, fire);
+    }
+    // Build the overlay DOM onto the stream anchor. Visibility (tickers, slot, wrapper) is reconciled by sync(), never here.
+    build(anchor) {
+        const els = { root: anchor.createDiv({ cls: "cc-aes" }) };
+        this.els = els;
+        this.win = anchor.win;
+        const top = els.root.createDiv({ cls: "cc-aes-top" });
+        const stats = top.createDiv({ cls: "cc-aes-stats" });
+        // The four corner tickers differ only by icon + what fills the text, so one helper builds each: an `icon + text` pill registered under its key (the visibility-toggle target), returning the text span. uptime/viewer share the stats row; profile/status each take their own line. Counters/status are filled later; profile's text is the static character name.
+        const ticker = (parent, key, icon) => {
+            const pill = parent.createDiv({ cls: "cc-aes-ticker cc-aes-" + key });
+            setIcon(pill.createSpan({ cls: "cc-aes-ticker-icon" }), icon);
+            els[key] = pill;
+            return pill.createSpan({ cls: "cc-aes-ticker-text" });
+        };
+        els.uptimeEl = ticker(stats, "uptime", "clock");
+        els.viewerEl = ticker(stats, "viewer", "drama");
+        ticker(top, "profile", "user-round").setText(this.view.walker?.character?.name ?? "");
+        els.statusEl = ticker(top, "status", "music");
+        // The bottom-bar slot: syncSlot mounts at most one occupant into it.
+        els.slot = els.root.createDiv({ cls: "cc-aes-slot" });
+        els.fx = els.root.createDiv({ cls: "cc-aes-fx" });
+        // Counters need their opening values now; everything else is reconciled by the sync() that always follows a render.
+        this.resetCounters();
+    }
+    // Reconcile each ticker's visibility to streamEnabled + its flag, the slot to its occupant row, and run the two sync-gated tickers only while live + shown. Called from the view's sync() (liveness / mode changes) and applyChange's repaint (a pill toggled in settings).
+    sync() {
+        const els = this.els;
+        if (!els || !els.root.isConnected)
+            return;
+        els.root.setCssProps({ "--cc-stream-font": this.settings.commentFont || "" });
+        const streaming = this.settings.streamEnabled;
+        const en = this.settings.enabledAesthetics;
+        const show = (key) => streaming && !!en[key];
+        // Each ticker's visibility follows its flag; the wrapper shows if any piece (ticker or slot occupant) does.
+        let any = false;
+        for (const a of AESTHETICS) {
+            // A key without its own element ("react") lives in the slot, reconciled below.
+            if (!els[a.key])
+                continue;
+            const on = show(a.key);
+            any = any || on;
+            els[a.key].classList.toggle("cc-hidden", !on);
+        }
+        any = this.syncSlot() || any;
+        els.root.classList.toggle("cc-aes-show", any);
+        // Only the two tickers own timers: run them while live + shown, freeze them otherwise. Both are fixed-interval, so they ride the shared timer primitive with lo === hi.
+        const live = this.view.isLive();
+        this.syncTimer("uptimeStop", live && show("uptime"), () => ({ lo: 1000, hi: 1000 }), () => {
+            this.uptimeS += 1;
+            this.renderCounters();
+        });
+        this.syncTimer("viewerStop", live && show("viewer"), () => ({ lo: tuning().aesViewerInterval, hi: tuning().aesViewerInterval }), () => {
+            // One drift tick: a small +/- wobble, plus an occasional bulk spike; never below the floor.
+            const t = tuning();
+            let delta = Math.round(randRange(-t.aesViewerDelta, t.aesViewerDelta));
+            if (Math.random() < t.aesViewerSpikeChance)
+                delta += Math.round(randRange(t.aesViewerSpikeMin, t.aesViewerSpikeMax));
+            this.viewerCount = Math.max(Math.round(t.aesViewerFloor), this.viewerCount + delta);
+            this.renderCounters();
+        });
+        if (show("status"))
+            this.updateStatus();
+    }
+    // Mount/replace/clear the bottom-bar occupant per SLOT_OCCUPANTS: of the rows that want the slot the last wins; a liveOnly winner renders nothing while the panel isn't live (the slot stays its own — no falling back to an earlier row, which would flicker-swap on every blur). Returns whether the slot is occupied.
+    syncSlot() {
+        const want = [...SLOT_OCCUPANTS].reverse().find((r) => r.wants(this));
+        const active = want && (!want.liveOnly || this.view.isLive()) ? want : null;
+        const key = active ? active.key : null;
+        if (key !== this.slotKey) {
+            if (this.slotTeardown) {
+                this.slotTeardown();
+                this.slotTeardown = null;
+            }
+            this.slotKey = key;
+            if (active)
+                this.slotTeardown = active.build(this, this.els.slot);
+        }
+        return key !== null;
+    }
+    // SLOT_OCCUPANTS "stream": the fake react bar — comment box (Enter injects a one-off feed comment), gift + like buttons raining particles into the fx layer. Static DOM with no ambient animation, so the teardown is just removal.
+    buildReactBar(slot) {
+        const react = slot.createDiv({ cls: "cc-aes-react" });
+        const comment = react.createDiv({ cls: "cc-aes-comment" });
+        const input = comment.createEl("input", { cls: "cc-aes-input", attr: { type: "text", placeholder: "Comment..." } });
+        // Press Enter to inject the typed line into the live feed as a one-off comment; it ages out with the regular ones and never touches their random rotation.
+        input.addEventListener("keydown", (e) => {
+            if (e.key !== "Enter")
+                return;
+            const text = input.value.trim();
+            input.value = "";
+            if (text)
+                this.view.feed.push(text, "cc-feed-bubble-self");
+        });
+        const gift = react.createEl("button", { cls: "cc-aes-btn cc-aes-gift", attr: { "aria-label": "Send a gift" } });
+        setIcon(gift, "gift");
+        const like = react.createEl("button", { cls: "cc-aes-btn cc-aes-like", attr: { "aria-label": "Like" } });
+        setIcon(like, "heart-plus");
+        gift.addEventListener("click", () => this.spawnEmoji());
+        like.addEventListener("click", () => this.spawnHeart());
+        return () => react.remove();
+    }
+    // SLOT_OCCUPANTS "news": the headline chyron, mounted hidden and owning NO timer and NO content — each news feed beat hands `chyronPass` a lazy strip builder, so the news interval is the only cadence and the chyron is purely display (the strip's drawing + evaluation live in the view's chyronStrip). A pass still fading/scrolling skips the beat BEFORE the builder runs (a busy chyron wastes no headline draws), and an empty strip (engine loading / empty list) is skipped too; the next beat cues a fresh pass. A pass fades the bar fully in, scrolls the strip right-to-left once via WAAPI, and fades the bar back out to nothing. The scroll's `delay` covers the fade-in (the "both" fill parks the strip off the right edge until the bar is fully in, then holds it off the left edge through the fade-out — nothing ever snaps back into view). The returned teardown cancels the scroll and unhooks the cue (the no-drift contract).
+    buildChyron(slot) {
+        const el = slot.createDiv({ cls: "cc-aes-chyron" });
+        const track = el.createSpan({ cls: "cc-aes-chyron-track" });
+        let anim = null;
+        this.chyronPass = (strip) => {
+            // A pass still fading/scrolling finishes undisturbed; this beat is skipped.
+            if (anim && anim.playState === "running")
+                return;
+            const text = strip();
+            if (!text)
+                return;
+            const t = tuning();
+            // Release the previous pass's held fill before the strip is reused.
+            if (anim)
+                anim.cancel();
+            track.setText(text);
+            el.addClass("cc-aes-chyron-visible");
+            // Enter from the right edge, exit fully left; constant px/sec, so a longer strip takes proportionally longer.
+            const travel = el.clientWidth + track.scrollWidth;
+            anim = track.animate([
+                { transform: `translateX(${el.clientWidth}px)` },
+                { transform: `translateX(${-track.scrollWidth}px)` },
+            ], {
+                delay: t.newsChyronFade,
+                duration: (travel / t.newsChyronSpeed) * 1000,
+                easing: "linear",
+                fill: "both",
+            });
+            anim.onfinish = () => el.removeClass("cc-aes-chyron-visible");
+        };
+        return () => {
+            this.chyronPass = null;
+            if (anim)
+                anim.cancel();
+            el.remove();
+        };
+    }
+    // SLOT_OCCUPANTS "program": play the airing's content lines one at a time as a bottom bubble. Each line is RiScript-evaluated against the character context (inline choices / $vars), shown, and held for the shared speech-bubble staying time (bubbleHoldMs, the quoteDurationMs setting); a line the not-yet-loaded engine can't render is skipped. After the last line's hold the airing ENDS (the view drops it, which tears this occupant down). The returned teardown cancels the pending step timer (the no-drift contract). Rebuilt fresh if the panel refocuses mid-airing.
+    buildProgram(slot) {
+        const bubble = slot.createDiv({ cls: "cc-aes-program" });
+        const win = this.win;
+        const R = this.plugin.riscript;
+        const lines = this.view.program ? this.view.program.lines : [];
+        // One context per airing — the choice rules are static strings, so the per-line randomness all lives in the RiScript eval.
+        const ctx = this.view.streamCtx();
+        let timer = null, i = 0;
+        // Strictly one pending timer: each step schedules the next or ends the airing, and the teardown cancels it — so a step can never run after teardown.
+        const step = () => {
+            // Advance to the next renderable line (skip templated lines the engine can't do yet).
+            let text = "";
+            while (i < lines.length && !text) {
+                const raw = lines[i++];
+                if (!R.pending(raw))
+                    text = R.evalTrim(raw, ctx);
+            }
+            if (!text) {
+                // Nothing left to show → end the airing (which tears this occupant down).
+                this.view.endProgram();
+                return;
+            }
+            // Re-run the entry transition for each line so it fades in fresh.
+            bubble.removeClass("cc-aes-program-visible");
+            bubble.setText(text);
+            void bubble.offsetWidth;
+            bubble.addClass("cc-aes-program-visible");
+            timer = win.setTimeout(step, bubbleHoldMs(bubble, this.settings.quoteDurationMs, text));
+        };
+        step();
+        return () => {
+            if (timer != null)
+                win.clearTimeout(timer);
+            bubble.remove();
+        };
+    }
+    // Reset both tickers to their opening values (on a fresh stream toggle / rebuild). The viewer count opens on a random draw in [min, max] so each stream starts believably different instead of the same fixed number every time.
+    resetCounters() {
+        const t = tuning();
+        this.uptimeS = 0;
+        this.viewerCount = Math.round(randRange(t.aesViewerStartMin, t.aesViewerStartMax));
+        this.renderCounters();
+    }
+    // Paint both ticker readouts from the live counters (the only place either is written out).
+    renderCounters() {
+        if (!this.els)
+            return;
+        this.els.uptimeEl.setText(formatHMS(this.uptimeS));
+        this.els.viewerEl.setText(this.viewerCount.toLocaleString());
+    }
+    // Now-playing: the active note's name (re-read on focus + active-leaf-change).
+    updateStatus() {
+        if (!this.els)
+            return;
+        const file = this.plugin.app.workspace.getActiveFile();
+        this.els.statusEl.setText(file ? file.basename : "Nothing playing");
+    }
+    // Drop everything this overlay owns (the two ticker timers, the slot occupant, refs) ahead of a re-render or close. The panel root reaps the DOM itself, but the slot teardown must run here so no WAAPI animation or timer outlives it.
+    teardown() {
+        this.syncTimer("uptimeStop", false);
+        this.syncTimer("viewerStop", false);
+        if (this.slotTeardown) {
+            this.slotTeardown();
+            this.slotTeardown = null;
+        }
+        this.slotKey = null;
+        this.els = null;
+    }
+    // Spawn one WAAPI particle into the fx layer. `build(layer, t)` returns the element plus its { frames, duration (seconds), easing }; the particle self-removes when the animation finishes. The shared scaffold for the gift/like rains below.
+    spawnParticle(build) {
+        const layer = this.els && this.els.fx;
+        if (!layer)
+            return;
+        const { el, frames, duration, easing } = build(layer, tuning());
+        const anim = el.animate(frames, { duration: duration * 1000, easing, fill: "forwards" });
+        anim.onfinish = () => el.remove();
+    }
+    // A "like" heart: rolled size/opacity (mostly grey, some pink), rising on a snaking WAAPI trail (alternating sway waypoints) while fading to transparent.
+    spawnHeart() {
+        this.spawnParticle((layer, t) => {
+            const el = layer.createDiv({ cls: "cc-aes-heart" });
+            // Lucide SVG (filled via CSS), not a "♥" glyph — that renders as the ❤️ emoji on many systems, which ignores the grey/pink colour and shows the wrong shape.
+            setIcon(el, "heart");
+            if (Math.random() < t.aesHeartPinkChance)
+                el.classList.add("cc-aes-heart-pink");
+            const opacity = randRange(t.aesHeartOpacityMin, t.aesHeartOpacityMax);
+            el.setCssProps({ "--cc-aes-heart-px": randRange(t.aesHeartSizeMin, t.aesHeartSizeMax) + "px" });
+            const rise = randRange(t.aesHeartRiseMin, t.aesHeartRiseMax);
+            const steps = Math.max(2, Math.round(randRange(t.aesHeartStepsMin, t.aesHeartStepsMax)));
+            let dir = Math.random() < 0.5 ? 1 : -1;
+            const frames = [];
+            for (let i = 0; i <= steps; i++) {
+                const p = i / steps;
+                let x = 0;
+                if (i > 0 && i < steps) {
+                    x = dir * randRange(t.aesHeartSway * 0.3, t.aesHeartSway);
+                    dir = -dir;
+                }
+                frames.push({ transform: `translate(${x}px, ${-rise * p}px)`, opacity: i === steps ? 0 : opacity * (1 - p * 0.6) });
+            }
+            return { el, frames, duration: randRange(t.aesHeartDurationMin, t.aesHeartDurationMax), easing: "ease-out" };
+        });
+    }
+    // A "gift" emoji: a true-random pick falling from the top edge at a rolled x / size / speed, drifting and fading out.
+    spawnEmoji() {
+        this.spawnParticle((layer, t) => {
+            // The raw gift-emoji text, split on whitespace; empty falls back to a single 🎁.
+            const pool = (this.settings.giftEmojis || "").split(/\s+/).filter((s) => s.length > 0);
+            const el = layer.createDiv({ cls: "cc-aes-emoji", text: pick(pool.length > 0 ? pool : ["🎁"]) });
+            const size = randRange(t.aesEmojiSizeMin, t.aesEmojiSizeMax);
+            // Per-particle font/size/x through CSS vars (styles.css owns the properties); an empty font var inherits the default emoji face.
+            el.setCssProps({
+                "--cc-gift-font": this.settings.giftEmojiFont || "",
+                "--cc-gift-size": size + "px",
+                "--cc-gift-x": (Math.random() * 90) + "%",
+            });
+            const fall = layer.clientHeight + size * 2;
+            const drift = randRange(-t.aesEmojiDrift, t.aesEmojiDrift);
+            const frames = [
+                { transform: `translate(0px, ${-size}px)`, opacity: 1 },
+                { transform: `translate(${drift}px, ${fall}px)`, opacity: 0 },
+            ];
+            return { el, frames, duration: randRange(t.aesEmojiDurationMin, t.aesEmojiDurationMax), easing: "linear" };
+        });
     }
 }
 /* ---------------- RiScript engine (shared) ---------------- */
@@ -2297,12 +2678,11 @@ class CompanionView extends ItemView {
         this.bgSig = "";
         this.bgBag = new Bag();
         this.sidebarBag = new Bag();
-        // Aesthetics overlay: DOM refs (null off-sprite), the two sync-gated tickers' timers and live counters (uptime seconds, viewer count).
-        this.aes = null;
-        this.uptimeStop = null;
-        this.uptimeS = 0;
-        this.viewerStop = null;
-        this.viewerCount = 0;
+        // Program state: the minute-boundary scheduler's stop handle, and the currently-airing program (null = none) as { url, lines } — url hijacks the stream bg + hides the sprite (paintBackground), lines play one at a time in the bottom slot (Aesthetics.buildProgram) and their completion ends the airing.
+        this.programStop = null;
+        this.program = null;
+        // The aesthetics overlay (tickers + bottom-bar slot + particle layer) — owns its own DOM, timers, and slot occupant; rebuilt per render.
+        this.aesthetics = new Aesthetics(this);
     }
     get settings() { return this.plugin.settings; }
     getViewType() {
@@ -2325,14 +2705,14 @@ class CompanionView extends ItemView {
         this.resizeObserver = new ResizeObserver(() => this.repositionOverlays());
         this.resizeObserver.observe(this.contentEl);
         // The now-playing status re-reads the active file on a switch (and on refocus via sync) — no timer of its own, so it isn't sync-gated.
-        this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.updateAesStatus()));
+        this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.aesthetics.updateStatus()));
         this.observer = new IntersectionObserver(() => this.sync());
         this.observer.observe(this.contentEl);
         this.render();
     }
     async onClose() {
         this.cleanupWalker();
-        this.stopAesTimers();
+        this.aesthetics.teardown();
         this.teardownStream();
         if (this.observer) {
             this.observer.disconnect();
@@ -2382,7 +2762,7 @@ class CompanionView extends ItemView {
     toggleMode(key) {
         const on = this.settings[key + "Enabled"] = !this.settings[key + "Enabled"];
         if (key === "stream" && on)
-            this.resetAesCounters();
+            this.aesthetics.resetCounters();
         void this.plugin.saveSettings();
         this.sync();
         this.relightIconButtons();
@@ -2417,6 +2797,8 @@ class CompanionView extends ItemView {
             running[s.key] = this.settings[s.key + "Enabled"] && live;
         const anySource = FEED_SOURCES.some((s) => running[s.key]);
         const oracleRunning = this.settings.oracleEnabled && live;
+        // A live program is scheduled (any program with a non-zero minute) — drives the airing check + the RiScript engine (its backdrop is templated).
+        const programScheduled = live && this.plugin.programData.programs.some((p) => p.schedule > 0);
         if (this.walker)
             live ? this.walker.resumeRest() : this.walker.pauseRest();
         // The feed is shared: mount it while ANY mode wants it, drop it when none do.
@@ -2424,13 +2806,14 @@ class CompanionView extends ItemView {
             this.feed.mount();
         else
             this.feed.unmount();
-        // Every FEED_SOURCES row is RiScript-templated (blog also needs the lexicon for generated handles), so make sure the shared engine (desktop-only) is loading; a failure latches with a Notice and only the templated lines drop — plain comments still push. Fire-and-forget.
-        if (anySource && !this.plugin.riscript.loaded && !this.plugin.riscript.loadFailed)
+        // Load the shared engine (desktop-only) whenever anything on-screen is RiScript-templated: a live feed source (the news beat covers both its faces) or a scheduled program backdrop. A failure latches with a Notice and only the templated lines drop — plain comments still push. Fire-and-forget.
+        const wantEngine = anySource || programScheduled;
+        if (wantEngine && !this.plugin.riscript.loaded && !this.plugin.riscript.loadFailed)
             this.plugin.riscript.ensure().catch(() => new Notice("Character Companion: stream comment variables need the RiScript engine in lib/ (desktop only). Plain comments still work."));
         // One reconciled random-interval timer per source row (idempotent — a live timer is left alone, see syncTimer).
         for (const s of FEED_SOURCES)
             this.syncTimer(s.key + "Stop", running[s.key],
-                () => ({ lo: this.settings[s.minKey], hi: this.settings[s.maxKey] }),
+                () => ({ lo: this.settings[s.key + "MinMs"], hi: this.settings[s.key + "MaxMs"] }),
                 () => s.push(this, this[s.key + "Bag"].next(s.pool(this))));
         // The Oracle reconciles its three sources (and lazy-loads its libs) against liveness.
         void this.oracle.sync(oracleRunning);
@@ -2438,18 +2821,22 @@ class CompanionView extends ItemView {
         this.syncTimer("bgStop", running.stream,
             () => ({ lo: this.settings.streamBgMinMs, hi: this.settings.streamBgMaxMs }),
             () => { this.bgUrl = this.nextBg(); this.paintBackground(); });
+        // Program scheduler: a self-realigning tick at each minute boundary (range() re-reads the ms-to-next-minute every cycle) that airs the program whose scheduled minute matches the clock. Off (and any airing ended) when not live.
+        this.syncTimer("programStop", programScheduled,
+            () => { const ms = 60000 - (Date.now() % 60000); return { lo: ms, hi: ms }; },
+            () => this.checkPrograms());
+        if (!programScheduled)
+            this.endProgram();
         this.paintBackground();
-        this.syncAesthetics();
+        this.aesthetics.sync();
     }
-    // Draw a line (non-repeat), evaluate as RiScript against character+set vars, push. Plain lines pass through; unloaded engine -> skip beat.
-    pushComment(text) {
-        if (!text) return;
+    // One stream beat: evaluate the drawn line against the character context + its own set's variables (carried on the pool item — see FEED_SOURCES, no reverse lookup), push. Plain lines pass through; unloaded engine -> skip beat.
+    pushComment(item) {
+        if (!item) return;
         const R = this.plugin.riscript;
-        if (R.pending(text)) return;
-        // Duplicate lines across sets resolve to the first enabled set's variables (var-bearing lines aren't realistically duplicated, and plain duplicates carry no vars to differ on).
-        const set = this.plugin.streamData.commentSets.find((cs) => cs.enabled && cs.comments.includes(text));
-        const ctx = Object.assign({}, this.streamCtx(), choiceRules(set ? set.vars : {}));
-        const line = R.evalTrim(text, ctx);
+        if (R.pending(item.text)) return;
+        const ctx = Object.assign({}, this.streamCtx(), choiceRules(item.set.vars));
+        const line = R.evalTrim(item.text, ctx);
         if (line) this.feed.push(line);
     }
     // Draw a mail template (non-repeat), evaluate Title/From/To/Content as RiScript, push as structured bubble.
@@ -2489,6 +2876,43 @@ class CompanionView extends ItemView {
             { cls: "tags", text: ev(toks.slice(1, i).join(" ")) },
         ], "cc-feed-bubble-blog");
     }
+    // One news beat, dressed by the face switch. Chyron face (default): hand the slot occupant a lazy strip builder — it runs only when the chyron is free, so a busy pass or a missing occupant (mid-program, not live) skips the beat before anything more is drawn or evaluated. Feed face: split off the headline's optional leading [SECTION] (pushBlog's structural split), evaluate section + body against the news context, push as a two-part bubble (the empty-section part self-drops in feed.push). Plain lines pass through; unloaded engine -> skip beat.
+    pushNews(raw) {
+        if (!raw) return;
+        if (!this.settings.newsToFeed) {
+            this.aesthetics.chyronPass?.(() => this.chyronStrip(raw));
+            return;
+        }
+        const R = this.plugin.riscript;
+        const { section, body } = parseNewsLine(raw);
+        if (R.pending(section + " " + body)) return;
+        const ctx = this.newsCtx();
+        this.feed.push([
+            { cls: "section", text: section && R.evalTrim(section, ctx) },
+            { cls: "body", text: R.evalTrim(body, ctx) },
+        ], "cc-feed-bubble-news");
+    }
+    // The chyron's content half (the slot occupant is pure display): one pass's strip — the beat's own draw plus up to --cc-news-chyron-max - 1 more from the SAME news bag, so both faces share one non-repeat rotation. Each line's [SECTION] is dropped (the chyron shows headlines, not labels) and its body evaluated against the news context; a line the unloaded engine can't render is skipped. Returns "" when nothing renders — the chyron skips an empty strip.
+    chyronStrip(raw) {
+        const R = this.plugin.riscript;
+        const pool = this.plugin.newsData.messages;
+        const ctx = this.newsCtx();
+        // A fresh count per pass: anything from a single headline up to the max (capped by the pool).
+        const cap = Math.min(tuning().newsChyronMax, pool.length);
+        const count = cap > 0 ? randInt(1, cap) : 0;
+        const lines = [];
+        for (let i = 0; i < count; i++) {
+            const { body } = parseNewsLine(i > 0 ? this.newsBag.next(pool) : raw);
+            if (!body || R.pending(body)) continue;
+            const line = R.evalTrim(body, ctx);
+            if (line) lines.push(line);
+        }
+        return lines.join("  •  ");
+    }
+    // The news evaluation context: the shown character's vars + the shared news constants — one recipe for the feed beat and the chyron alike.
+    newsCtx() {
+        return Object.assign({}, this.streamCtx(), choiceRules(this.plugin.newsData.constants));
+    }
     // Character template vars with safe defaults. Pronouns: slash-sep -> $they/$them/$their (4th/5th -> $theirs/$themself). Deeds/topics: verb-initial phrases for inflection.
     streamCtx() {
         const c = this.getActiveCharacter();
@@ -2510,26 +2934,44 @@ class CompanionView extends ItemView {
             role: roles.length ? roles : ["legend"],
         }));
     }
-    // Reconcile a named self-rescheduling timer to on/off (idempotent). range() yields {lo,hi}; fire() runs one tick.
+    // Reconcile one of this view's named timers (feed sources, background cycle) — see reconcileTimer.
     syncTimer(handle, on, range, fire) {
-        if (on === (this[handle] != null))
-            return;
-        if (on)
-            this[handle] = randomInterval(this.containerEl.win, range, fire);
-        else {
-            this[handle]();
-            this[handle] = null;
-        }
+        reconcileTimer(this, this.containerEl.win, handle, on, range, fire);
     }
     // Draw the next backdrop path from the bag over the configured background paths.
     nextBg() {
         return this.bgBag.next(resolvePathList(this.app, this.settings.streamBackgrounds));
+    }
+    // Program scheduler tick (one per minute boundary): air a program whose scheduled minute matches the clock (`% 60` folds the ":00"-as-60 step back to minute 0 — see PROGRAM_SCHEMA). Only airable candidates (non-empty content) enter the draw, and a same-minute tie is broken at random. Only one airs at a time — an in-progress airing blocks a new trigger. An airing keeps the raw content lines (it lives as long as they take to play — see Aesthetics.buildProgram) and picks + holds ONE resolved backdrop for the whole run (no mid-program switch). The repaint hijacks the backdrop; the aes sync hands the bottom slot to the program occupant, which drives the sequence and calls endProgram when done.
+    checkPrograms() {
+        if (this.program)
+            return;
+        const minute = new Date().getMinutes();
+        const due = pick(this.plugin.programData.programs.filter((p) => p.schedule > 0 && p.schedule % 60 === minute && p.content.trim()));
+        if (!due)
+            return;
+        const lines = due.content.split("\n").map((s) => s.trim()).filter(Boolean);
+        // Background is a plain stream-bg-style field (no RiScript): resolve to image URLs and draw one, held for the whole airing. Null → no backdrop hijack (content plays over the normal scene).
+        const bgUrls = resolvePathList(this.app, due.background);
+        this.program = { url: bgUrls.length ? pick(bgUrls) : null, lines };
+        this.paintBackground();
+        this.aesthetics.sync();
+    }
+    // End the current airing (last line played, or the panel went not-live / closed): drop the airing and reconcile — restore the backdrop + sprite and hand the bottom slot back to whatever else wants it. Idempotent.
+    endProgram() {
+        if (!this.program)
+            return;
+        this.program = null;
+        this.paintBackground();
+        this.aesthetics.sync();
     }
     // Full stream teardown (panel closing): stop every feed source, drop the feed, the background cycle, and every built effect — the last is why a closed panel leaves no live WAAPI drift.
     teardownStream() {
         for (const { key } of FEED_SOURCES)
             this.syncTimer(key + "Stop", false);
         this.syncTimer("bgStop", false);
+        this.syncTimer("programStop", false);
+        this.endProgram();
         this.oracle.unmount();
         this.feed.unmount();
         this.teardownEffects();
@@ -2542,7 +2984,7 @@ class CompanionView extends ItemView {
             teardown();
         this.builtFx = null;
     }
-    // Paint the stream overlay on the current anchor. The backdrop shows whenever streaming (regardless of liveness, picking its first image lazily); effects are gated on `running` (live), torn down when unseen.
+    // Paint the stream overlay on the current anchor. The backdrop shows whenever streaming (regardless of liveness, picking its first image lazily); effects are gated on `running` (live), torn down when unseen. A live program hijacks the whole backdrop on top of all this.
     paintBackground() {
         const anchor = this.contentEl.querySelector(".cc-anchor");
         if (!anchor)
@@ -2556,8 +2998,11 @@ class CompanionView extends ItemView {
         if (streaming && !this.bgUrl)
             this.bgUrl = this.nextBg();
         const running = streaming && this.isLive();
-        const bg = streaming && this.bgUrl;
+        // A live airing WITH a background hijacks the backdrop: its held image replaces the stream bg and the sprite hides (cc-program) for the airing. A background-less program plays its content bubble over the normal scene (no hijack). Effects (gated on `running`) and aesthetics are untouched — the program only owns the backdrop layer + the sprite's visibility.
+        const program = (this.program && this.program.url && this.isLive()) ? this.program.url : null;
+        const bg = program || (streaming && this.bgUrl);
         anchor.classList.toggle("cc-streaming", !!bg);
+        anchor.classList.toggle("cc-program", !!program);
         anchor.setCssProps({ "--cc-bg": bg ? `url("${bg}")` : "none" });
         // Reconcile effects: toggle each effect's class, build/teardown DOM to match.
         if (!this.builtFx || this.builtFx.anchor !== anchor) {
@@ -2576,164 +3021,6 @@ class CompanionView extends ItemView {
             }
         }
     }
-    // Build aesthetics overlay DOM: top-left tickers + bottom react bar + particle layer. Visibility reconciled by syncAesthetics.
-    buildAesthetics(anchor) {
-        const aes = anchor.createDiv({ cls: "cc-aes" });
-        const top = aes.createDiv({ cls: "cc-aes-top" });
-        const stats = top.createDiv({ cls: "cc-aes-stats" });
-        this.aes = { root: aes };
-        // The four corner tickers differ only by icon + what fills the text, so one helper builds each: an `icon + text` pill registered under its key (the visibility-toggle target), returning the text span. uptime/viewer share the stats row; profile/status each take their own line. Counters/status are filled later; profile's text is the static character name.
-        const ticker = (parent, key, icon) => {
-            const pill = parent.createDiv({ cls: "cc-aes-ticker cc-aes-" + key });
-            setIcon(pill.createSpan({ cls: "cc-aes-ticker-icon" }), icon);
-            this.aes[key] = pill;
-            return pill.createSpan({ cls: "cc-aes-ticker-text" });
-        };
-        this.aes.uptimeEl = ticker(stats, "uptime", "clock");
-        this.aes.viewerEl = ticker(stats, "viewer", "drama");
-        ticker(top, "profile", "user-round").setText(this.walker?.character?.name ?? "");
-        this.aes.statusText = ticker(top, "status", "music");
-        const react = aes.createDiv({ cls: "cc-aes-react" });
-        const comment = react.createDiv({ cls: "cc-aes-comment" });
-        const input = comment.createEl("input", { cls: "cc-aes-input", attr: { type: "text", placeholder: "Comment..." } });
-        // Press Enter to inject the typed line into the live feed as a one-off comment; it ages out with the regular ones and never touches their random rotation.
-        input.addEventListener("keydown", (e) => {
-            if (e.key !== "Enter")
-                return;
-            const text = input.value.trim();
-            input.value = "";
-            if (text)
-                this.feed.push(text, "cc-feed-bubble-self");
-        });
-        const gift = react.createEl("button", { cls: "cc-aes-btn cc-aes-gift", attr: { "aria-label": "Send a gift" } });
-        setIcon(gift, "gift");
-        const like = react.createEl("button", { cls: "cc-aes-btn cc-aes-like", attr: { "aria-label": "Like" } });
-        setIcon(like, "heart-plus");
-        const fx = aes.createDiv({ cls: "cc-aes-fx" });
-        gift.addEventListener("click", () => this.spawnEmoji());
-        like.addEventListener("click", () => this.spawnHeart());
-        this.aes.react = react;
-        this.aes.fx = fx;
-        // Counters need their opening values now; the now-playing status is reconciled by the sync() that always follows a render (syncAesthetics → updateAesStatus when shown).
-        this.resetAesCounters();
-    }
-    // Reconcile each piece's visibility to streamEnabled + its flag, and run the two sync-gated tickers (uptime, viewer) only while live. Called from sync() (liveness / stream changes) and applyChange's repaint (an Aesthetics pill toggled in settings).
-    syncAesthetics() {
-        const aes = this.aes;
-        if (!aes || !aes.root.isConnected)
-            return;
-        aes.root.setCssProps({ "--cc-stream-font": this.settings.commentFont || "" });
-        const streaming = this.settings.streamEnabled;
-        const en = this.settings.enabledAesthetics;
-        const show = (key) => streaming && !!en[key];
-        // Each piece's visibility follows its flag; the wrapper shows if any piece does.
-        let any = false;
-        for (const a of AESTHETICS) {
-            const on = show(a.key);
-            any = any || on;
-            aes[a.key].classList.toggle("cc-hidden", !on);
-        }
-        aes.root.classList.toggle("cc-aes-show", any);
-        // Only the two tickers own timers: run them while live + shown, freeze them otherwise. Both are fixed-interval, so they ride the shared syncTimer primitive with lo === hi.
-        const live = this.isLive();
-        this.syncTimer("uptimeStop", live && show("uptime"), () => ({ lo: 1000, hi: 1000 }), () => {
-            this.uptimeS += 1;
-            this.renderAesCounters();
-        });
-        this.syncTimer("viewerStop", live && show("viewer"), () => ({ lo: tuning().aesViewerInterval, hi: tuning().aesViewerInterval }), () => {
-            // One drift tick: a small +/- wobble, plus an occasional bulk spike; never below the floor.
-            const t = tuning();
-            let delta = Math.round(randRange(-t.aesViewerDelta, t.aesViewerDelta));
-            if (Math.random() < t.aesViewerSpikeChance)
-                delta += Math.round(randRange(t.aesViewerSpikeMin, t.aesViewerSpikeMax));
-            this.viewerCount = Math.max(Math.round(t.aesViewerFloor), this.viewerCount + delta);
-            this.renderAesCounters();
-        });
-        if (show("status"))
-            this.updateAesStatus();
-    }
-    // Reset both tickers to their opening values (on a fresh stream toggle / render). The viewer count opens on a random draw in [min, max] so each stream starts believably different instead of the same fixed number every time.
-    resetAesCounters() {
-        const t = tuning();
-        this.uptimeS = 0;
-        this.viewerCount = Math.round(randRange(t.aesViewerStartMin, t.aesViewerStartMax));
-        this.renderAesCounters();
-    }
-    stopAesTimers() {
-        this.syncTimer("uptimeStop", false);
-        this.syncTimer("viewerStop", false);
-    }
-    // Paint both ticker readouts from the live counters (the only place either is written out).
-    renderAesCounters() {
-        if (!this.aes)
-            return;
-        this.aes.uptimeEl.setText(formatHMS(this.uptimeS));
-        this.aes.viewerEl.setText(this.viewerCount.toLocaleString());
-    }
-    // Now-playing: the active note's name (re-read on focus + active-leaf-change).
-    updateAesStatus() {
-        if (!this.aes)
-            return;
-        const file = this.app.workspace.getActiveFile();
-        this.aes.statusText.setText(file ? file.basename : "Nothing playing");
-    }
-    // Spawn one WAAPI particle into the react bar's fx layer. `build(layer, t)` returns the element plus its { frames, duration (seconds), easing }; the particle self-removes when the animation finishes. The shared scaffold for the gift/like rains below.
-    spawnParticle(build) {
-        const layer = this.aes && this.aes.fx;
-        if (!layer)
-            return;
-        const { el, frames, duration, easing } = build(layer, tuning());
-        const anim = el.animate(frames, { duration: duration * 1000, easing, fill: "forwards" });
-        anim.onfinish = () => el.remove();
-    }
-    // A "like" heart: rolled size/opacity (mostly grey, some pink), rising on a snaking WAAPI trail (alternating sway waypoints) while fading to transparent.
-    spawnHeart() {
-        this.spawnParticle((layer, t) => {
-            const el = layer.createDiv({ cls: "cc-aes-heart" });
-            // Lucide SVG (filled via CSS), not a "♥" glyph — that renders as the ❤️ emoji on many systems, which ignores the grey/pink colour and shows the wrong shape.
-            setIcon(el, "heart");
-            if (Math.random() < t.aesHeartPinkChance)
-                el.classList.add("cc-aes-heart-pink");
-            const opacity = randRange(t.aesHeartOpacityMin, t.aesHeartOpacityMax);
-            el.setCssProps({ "--cc-aes-heart-px": randRange(t.aesHeartSizeMin, t.aesHeartSizeMax) + "px" });
-            const rise = randRange(t.aesHeartRiseMin, t.aesHeartRiseMax);
-            const steps = Math.max(2, Math.round(randRange(t.aesHeartStepsMin, t.aesHeartStepsMax)));
-            let dir = Math.random() < 0.5 ? 1 : -1;
-            const frames = [];
-            for (let i = 0; i <= steps; i++) {
-                const p = i / steps;
-                let x = 0;
-                if (i > 0 && i < steps) {
-                    x = dir * randRange(t.aesHeartSway * 0.3, t.aesHeartSway);
-                    dir = -dir;
-                }
-                frames.push({ transform: `translate(${x}px, ${-rise * p}px)`, opacity: i === steps ? 0 : opacity * (1 - p * 0.6) });
-            }
-            return { el, frames, duration: randRange(t.aesHeartDurationMin, t.aesHeartDurationMax), easing: "ease-out" };
-        });
-    }
-    // A "gift" emoji: a true-random pick falling from the top edge at a rolled x / size / speed, drifting and fading out.
-    spawnEmoji() {
-        this.spawnParticle((layer, t) => {
-            // The raw gift-emoji text, split on whitespace; empty falls back to a single 🎁.
-            const pool = (this.settings.giftEmojis || "").split(/\s+/).filter((s) => s.length > 0);
-            const el = layer.createDiv({ cls: "cc-aes-emoji", text: pick(pool.length > 0 ? pool : ["🎁"]) });
-            const size = randRange(t.aesEmojiSizeMin, t.aesEmojiSizeMax);
-            // Per-particle font/size/x through CSS vars (styles.css owns the properties); an empty font var inherits the default emoji face.
-            el.setCssProps({
-                "--cc-gift-font": this.settings.giftEmojiFont || "",
-                "--cc-gift-size": size + "px",
-                "--cc-gift-x": (Math.random() * 90) + "%",
-            });
-            const fall = layer.clientHeight + size * 2;
-            const drift = randRange(-t.aesEmojiDrift, t.aesEmojiDrift);
-            const frames = [
-                { transform: `translate(0px, ${-size}px)`, opacity: 1 },
-                { transform: `translate(${drift}px, ${fall}px)`, opacity: 0 },
-            ];
-            return { el, frames, duration: randRange(t.aesEmojiDurationMin, t.aesEmojiDurationMax), easing: "linear" };
-        });
-    }
     render() {
         whenStyled(() => this.renderNow());
     }
@@ -2741,9 +3028,8 @@ class CompanionView extends ItemView {
         const root = this.contentEl;
         this.cleanupWalker();
         this.teardownEffects();
-        // The aesthetics DOM lives under the about-to-be-emptied root, so drop its timers and stale refs first (buildAesthetics rebuilds them when there's a sprite).
-        this.stopAesTimers();
-        this.aes = null;
+        // The aesthetics DOM lives under the about-to-be-emptied root, so tear it down first (timers, slot occupant, stale refs); renderBody rebuilds it when there's a sprite.
+        this.aesthetics.teardown();
         root.empty();
         root.addClass("cc-root");
         // The icon column is always present (even in empty states) so settings + stream actions stay reachable.
@@ -2776,8 +3062,8 @@ class CompanionView extends ItemView {
         // Bubble lives on <body> (same level as the comment feed), NOT inside the panel, so the workspace-leaf frame can never clip it — it stays fully visible even past the panel edge. Being off-panel, root.empty() can't reap it, so cleanupWalker removes it. The walker positions it against the sprite picture (`sprite`) each time it speaks; the view re-runs that on resize/layout-change while it's up.
         const bubble = activeDocument.body.createDiv({ cls: "cc-bubble" });
         this.walker = new Walker(null, this.plugin, character, { wrapEl: spriteWrap, imgEl: sprite, bubbleEl: bubble, bubbleAnchorEl: sprite }, urls, 0);
-        // The livestream overlay sits on the anchor, above the sprite (syncAesthetics gates it).
-        this.buildAesthetics(anchor);
+        // The aesthetics overlay sits on the anchor, above the sprite (its sync gates every piece).
+        this.aesthetics.build(anchor);
     }
     // The vertical icon-button column down the right edge (SIDEBAR_BUTTONS): one action each, lit when its `active` predicate holds, greyed when `disabled`.
     renderIconColumn(root) {
@@ -3006,7 +3292,7 @@ const PILL_GRIDS = {
         entries: (t) => t.enablePills(t.plugin.mailData.mailTemplates),
         save: (t) => t.plugin.saveDataFile("mailData"),
     },
-    // Effects + aesthetics: no empty state, no explicit save. Their flag maps live in data.json, so the default saveSettings persists them — and that repaints the open panels' stream overlay IN PLACE (effects rebuild just the toggled fx; aesthetics via syncAesthetics), never tearing down the sprite's rest cycle.
+    // Effects + aesthetics: no empty state, no explicit save. Their flag maps live in data.json, so the default saveSettings persists them — and that repaints the open panels' stream overlay IN PLACE (effects rebuild just the toggled fx; aesthetics through the overlay's own sync), never tearing down the sprite's rest cycle.
     effect: {
         grid: "effectGridEl",
         entries: (t) => t.flagPills(SPECIAL_EFFECTS, t.plugin.settings.enabledEffects),
@@ -3083,6 +3369,19 @@ class CompanionSettingTab extends PluginSettingTab {
             onMutate: () => this.rebuildPillGrid("mail"),
             renderBody: (host, m, ed) => this.renderMailBody(host, m, ed),
         });
+        // The program list is backed by program-data.json. Unlike mail there's no enable pill grid — a program self-gates on its own schedule (0 = off) — so onMutate has nothing to rebuild; the file's afterSave reconciles the scheduler.
+        this.programEditor = new ListEditor(this, {
+            pickName: "Pick a program to edit",
+            pickDesc: "Click a name below to edit it, drag to reorder. Right-click to delete.",
+            addText: "Add program",
+            emptyText: 'No programs yet. Click "Add program".',
+            save: () => this.plugin.saveDataFile("programData"),
+            items: () => this.plugin.programData.programs,
+            labelOf: (p) => p.label || "(unnamed)",
+            makeItem: () => newItem(PROGRAM_SCHEMA, { label: "New program" }),
+            onMutate: () => { },
+            renderBody: (host, p, ed) => this.renderProgramBody(host, p, ed),
+        });
         // Tab table — the single source for both the tab bar (display) and the body dispatch (renderBody); add a page = add a row. An `icon` marks a list-editor page (Character/Comment/Patron/Inbox): the tab bar renders it icon-only, expanding to icon+label only while active (see display()).
         this.tabs = [
             { id: "behavior", label: "Behavior", render: (c) => this.renderBehaviorTab(c) },
@@ -3096,6 +3395,7 @@ class CompanionSettingTab extends PluginSettingTab {
             { id: "inbox", label: "Inbox", icon: "mails", render: (c) => this.renderInboxTab(c) },
             { id: "blog", label: "Blog", render: (c) => this.renderBlogTab(c) },
             { id: "news", label: "News", render: (c) => this.renderNewsTab(c) },
+            { id: "program", label: "Program", icon: "tv", render: (c) => this.renderProgramTab(c) },
         ];
     }
     // The shared persist tail every control's onChange ends in: the field's own save() when given (per-file lists persist to their own file), else the settings save with the control's rerender flag.
@@ -3402,7 +3702,7 @@ class CompanionSettingTab extends PluginSettingTab {
             name: "Comment interval",
             desc: "A new comment appears after a random time in this range.",
             unit: "sec", min: 5, max: 30, step: 5,
-            minKey: "streamCommentMinMs", maxKey: "streamCommentMaxMs",
+            minKey: "streamMinMs", maxKey: "streamMaxMs",
         });
         this.addSliderSetting(c, {
             name: "Visible comment history",
@@ -3598,11 +3898,37 @@ class CompanionSettingTab extends PluginSettingTab {
             save: () => this.plugin.saveDataFile("blogData"),
         });
     }
-    // News mode — placeholder feed source.
+    // News mode's settings: the shared interval range (one cadence for whichever face runs), the face switch (chyron vs feed), the flat headline list (one per line, no pills — blog's tab shape), and the shared constants any headline can draw from. Unlike blog, the lines also see the character vars (mail's context); both faces draw from the same list. The list + constants persist to news-data.json; the interval + switch are data.json scalars.
     renderNewsTab(c) {
-        this.tabIntro(c, "Planned for later.");
+        this.tabIntro(c, "The rolling news that reports on the character.");
         new Setting(c).setName("News mode").setHeading();
-        new Setting(c).setName("There's nothing here.");
+        this.addMsRangeSetting(c, {
+            name: "News interval",
+            desc: "The next news beat — a chyron pass or a feed bubble, whichever face runs — comes after a random time in this range.",
+            unit: "min", min: 0.5, max: 30, step: 0.5,
+            minKey: "newsMinMs", maxKey: "newsMaxMs",
+        });
+        this.addToggleSetting(c, {
+            name: "Feed instead of chyron",
+            desc: "Off: headlines scroll across the bottom-bar chyron, several per pass. On: each beat drops one headline into the comment feed as a bubble instead.",
+            get: () => this.plugin.settings.newsToFeed,
+            set: (v) => (this.plugin.settings.newsToFeed = v),
+        });
+        new Setting(c).setName("Message list").setHeading();
+        new Setting(c)
+            .setName("Headlines")
+            .setDesc("One headline per line. Format = \"[Section] headline content\". A leading [Section] is optional; it shows as a label in the feed and is dropped from the chyron. RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], lexicon = $rndAdj / $rndNoun / $rndVerb.");
+        this.addBulkTextarea(c, {
+            get: () => this.plugin.newsData.messages,
+            set: (lines) => (this.plugin.newsData.messages = lines),
+            save: () => this.plugin.saveDataFile("newsData"),
+        });
+        this.addConstantsSection(c, {
+            desc: "One constant per line. Format = \"constant: a, b, c\". Shared across all headlines.",
+            get: () => this.plugin.newsData.constants,
+            set: (m) => (this.plugin.newsData.constants = m),
+            save: () => this.plugin.saveDataFile("newsData"),
+        });
     }
     // Per-template editor body: an admin-only name (pill label, never shown in-feed), then the four RiScript fields actually drawn into the feed. All persist to mail-data.json.
     renderMailBody(containerEl, mail, editor) {
@@ -3643,6 +3969,46 @@ class CompanionSettingTab extends PluginSettingTab {
             .setName("Content")
             .setDesc("Multi-line. RiScript: Same as Title, plus $to for mail content to repeat the addressee.");
         this.addTextarea(box, { get: () => mail.content, set: (v) => (mail.content = v), save, rows: 6 });
+    }
+    // Program mode's settings: a pill-edited list of scheduled backdrop takeovers (mirrors the Inbox tab). The list persists to program-data.json; there's no interval or constants section — each program carries its own schedule.
+    renderProgramTab(c) {
+        this.tabIntro(c, "The scheduled broadcasts that take over the panel backdrop.");
+        new Setting(c).setName("Program list").setHeading();
+        this.programEditor.mount(c);
+    }
+    // Per-program editor body: an admin-only label (pill label), the stream-bg-style backdrop, the airing minute, and the RiScript content script. All persist to program-data.json.
+    renderProgramBody(containerEl, program, editor) {
+        const box = containerEl.createDiv({ cls: "cc-settings-box" });
+        const save = () => this.plugin.saveDataFile("programData");
+        this.addTextSetting(box, {
+            name: "Label",
+            placeholder: "(unnamed)",
+            get: () => program.label,
+            set: (v) => { program.label = v; editor.refreshPillLabel(program.id, v || "(unnamed)"); },
+            save,
+        });
+        this.addTextSetting(box, {
+            name: "Background",
+            desc: "The full-panel image while the program airs. Same format as the stream background (comma-separated image paths, a single folder path, or an emoji), drawn at random and held for the whole airing — no timed swap. Hijacks the stream background and hides the sprite; effects and overlays keep running. Not RiScript.",
+            placeholder: "Attach/bg1.png, Attach/bg2.png",
+            get: () => program.background,
+            set: (v) => (program.background = v.trim()),
+            save,
+        });
+        // Slider steps: Off → :01 … :59 → :00. The last step (":00", the top of the hour) is stored as 60 so it can't collide with 0 = off; the scheduler folds it back with % 60.
+        this.addSliderSetting(box, {
+            name: "Schedule",
+            desc: "The program airs at this minute past every hour (e.g. :35 → 0:35, 1:35, … 23:35) while the sidebar panel is active. The first step disables it; the last step (:00) is the top of the hour.",
+            min: 0, max: 60, step: 1,
+            get: () => program.schedule,
+            set: (v) => (program.schedule = v),
+            save,
+            readout: (v) => v === 0 ? "Off" : ":" + String(v % 60).padStart(2, "0"),
+        });
+        new Setting(box)
+            .setName("Content")
+            .setDesc("The script that plays while the program airs — one line at a time as a bubble at the bottom, each held like a speech bubble, then the airing ends. Multi-line (one line per beat). RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], lexicon = $rndAdj / $rndNoun / $rndVerb.");
+        this.addTextarea(box, { get: () => program.content, set: (v) => (program.content = v), save, rows: 6 });
     }
     // Render an on/off pill per animation of a role, wired to its settings flag map and drag-paintable. Shared by the idle and surprise grids.
     renderAnimToggles(grid, role) {
@@ -3945,6 +4311,11 @@ class CharacterCompanionPlugin extends Plugin {
         // Migrate the pre-tri-state quoteTypewriter boolean (true=typed, false=whole line) to the "off"/"slow"/"fast" string.
         if (typeof s.quoteTypewriter === "boolean")
             s.quoteTypewriter = s.quoteTypewriter ? "slow" : "off";
+        // Migrate the pre-rename stream interval keys (streamCommentMin/MaxMs) to the `<key>MinMs`/`<key>MaxMs` convention every feed source now shares.
+        if (typeof loaded.streamCommentMinMs === "number")
+            s.streamMinMs = loaded.streamCommentMinMs;
+        if (typeof loaded.streamCommentMaxMs === "number")
+            s.streamMaxMs = loaded.streamCommentMaxMs;
         // Re-normalise each enable map per its FLAG_MAPS row: keep known flags, default new names.
         for (const [key, names, def] of FLAG_MAPS)
             s[key] = boolMap(names, loaded[key], def);
@@ -4000,11 +4371,10 @@ class CharacterCompanionPlugin extends Plugin {
         await this.saveData(this.settings);
         this.applyChange(rerender);
     }
-    // Reconcile open UI after a save. full=true -> re-render panels. Light repaint otherwise (stream settings apply live). Always reconciles stage.
+    // Reconcile open UI after a save. full=true -> re-render panels. Otherwise the panel's own idempotent sync() reconciles everything in place (timers, slot occupant, backdrop, effects — every setting applies live without tearing the sprite down); only the feed font sits outside it. Always reconciles stage.
     applyChange(full = false) {
         this.eachView(full ? (view) => view.render() : (view) => {
-            view.paintBackground();
-            view.syncAesthetics();
+            view.sync();
             view.feed.applyFont();
         });
         if (this.stage)

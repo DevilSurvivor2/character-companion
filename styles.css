@@ -34,7 +34,7 @@
     --cc-rest-idle-fraction: 0.5;
     --cc-flick-sample-floor: 8ms;     /* min segment time for pointer-velocity sample */
     --cc-flick-min-velocity: 320;
-    --cc-flick-decel: 9600;
+    --cc-flick-decel: 5600;
     --cc-idle-chance: 0.1;
     --cc-tickle-window: 600ms;
     --cc-tickle-min-step: 4px;
@@ -102,6 +102,13 @@
     --cc-blog-handle-digit-min: 1;       /* fewest trailing digits when the digit roll hits */
     --cc-blog-handle-digit-max: 3;       /* most trailing digits */
     --cc-blog-handle-max-len: 7;         /* max characters per handle word */
+
+    /* News mode (headline feed OR bottom-slot chyron — one face at a time). The chyron owns no cadence: every pass is cued by a news feed beat (the newsMinMs/newsMaxMs setting), so no interval var lives here. */
+    --cc-news-chyron-max: 3;        /* MAX headlines joined per chyron pass; each pass picks a random count 1..max */
+    --cc-news-chyron-speed: 55;     /* scroll speed, px per second (a longer strip takes proportionally longer) */
+    --cc-news-chyron-fade: 200ms;   /* bar fade-in/out; also the scroll's start delay, so the bar is fully in before the strip moves */
+
+    /* Program mode (scheduled broadcast). The airing lasts as long as its content takes to play — each line holds for the shared quote staying time (--cc-quote-* / quoteDurationMs) — so it needs no duration knob of its own. */
 
     /* Shared font for stream text (feed bubbles, tickers, comment box). */
     --cc-stream-font: "Arial", "Inter", "Segoe UI";
@@ -199,6 +206,14 @@
     background-size: cover;
     background-position: center;
     filter: blur(1px);
+}
+
+/* Program mode hijacks the same backdrop: the airing image shows crisp (no stream blur) and the sprite hides for its duration. Effects and overlay tickers keep running — the program owns only the backdrop and the sprite's visibility. */
+.cc-anchor.cc-program::before {
+    filter: none;
+}
+.cc-anchor.cc-program .cc-sprite-wrap {
+    visibility: hidden;
 }
 
 /* Stream special effects: each enabled effect adds a class to the anchor. Effect descriptors are read by JS to inject particle and layer nodes. */
@@ -832,6 +847,28 @@ button:not(.clickable-icon).cc-tab-active {
 .cc-feed-part-tags {
     color: var(--text-muted);
     font-size: 0.85em;
+}
+
+/* News mode: headline bubble — an optional [Section] label chip above the headline body. */
+.cc-feed-bubble-news {
+    border-color: var(--interactive-accent);
+}
+/* Section label reads as a small uppercase category chip. */
+.cc-feed-part-section {
+    display: inline-block;
+    margin-bottom: 3px;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-size: 0.75em;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+/* Scoped to news — the "body" part class is shared with blog, which stays un-bolded. */
+.cc-feed-bubble-news .cc-feed-part-body {
+    font-weight: 600;
 }
 
 /* ANIMATIONS — one behaviour = one class = one @keyframes, on the image. Each keyframe is transform-only (+ translateY where needed). Up (negative translateY) is capped at -3% (= --cc-rest-down); down (positive translateY) is unlimited (dip first, then rise). Directional keyframes read var(--cc-dir) for L/R mirror. */
@@ -1477,16 +1514,23 @@ button:not(.clickable-icon).cc-tab-active {
     white-space: nowrap;
 }
 
-/* Bottom react bar: fake comment box + gift/like buttons. */
-.cc-aes-react {
+/* Bottom-bar slot: at most one occupant at a time (see SLOT_OCCUPANTS in main.js) — stream's react bar or the news chyron. The slot owns the placement; each occupant fills it. */
+.cc-aes-slot {
     position: absolute;
     inset-inline: 16px;
     inset-block-end: 25px;
     display: flex;
     align-items: center;
+}
+/* React bar occupant: fake comment box + gift/like buttons. */
+.cc-aes-react {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
     gap: 8px;
     filter:
-        drop-shadow(0 0 0px var(--text-normal)) 
+        drop-shadow(0 0 0px var(--text-normal))
         drop-shadow(0 0 1px var(--background-primary))
         drop-shadow(0 0 7px var(--background-primary));
 }
@@ -1537,6 +1581,51 @@ button:not(.clickable-icon).cc-tab-active {
 .cc-aes-btn .svg-icon {
     width: 24px;
     height: 24px;
+}
+
+/* Chyron occupant: one clipped line of headlines; WAAPI scrolls the track right-to-left, only the box lives here. Fully invisible between passes: each news beat fades the bar in (--cc-news-chyron-fade, which also delays the scroll so the bar is fully in before the strip moves), scrolls once, and fades it back out to nothing. */
+.cc-aes-chyron {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    padding: 3px 0;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.45);
+    color: rgb(255, 255, 255, 0.85);
+    font-family: var(--cc-stream-font);
+    font-size: var(--font-ui-smaller);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--cc-news-chyron-fade) ease;
+    text-transform: uppercase;
+}
+.cc-aes-chyron-visible {
+    opacity: 1;
+}
+.cc-aes-chyron-track {
+    display: inline-block;
+    will-change: transform;
+}
+
+/* Program occupant: the airing's content, one line at a time as a centred bottom bubble. Fades in per line (opacity only, like the feed bubbles). */
+.cc-aes-program {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 6px 14px;
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.55);
+    color: rgb(255, 255, 255, 0.9);
+    font-family: var(--cc-stream-font);
+    font-size: var(--font-ui-small);
+    text-align: center;
+    word-break: break-word;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 200ms ease;
+}
+.cc-aes-program-visible {
+    opacity: 1;
 }
 
 /* Particle layer for WAAPI-driven hearts and emoji. Click-through; clips to panel. */
