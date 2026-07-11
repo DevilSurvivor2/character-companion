@@ -224,7 +224,7 @@ class CompanionView extends ItemView {
         if (!item) return;
         const R = this.plugin.riscript;
         if (R.pending(item.text)) return;
-        const ctx = Object.assign({}, this.streamCtx(), choiceRules(item.set.vars));
+        const ctx = this.charCtx(item.set.vars);
         const line = R.evalTrim(item.text, ctx);
         if (line) this.feed.push(line);
     }
@@ -233,7 +233,7 @@ class CompanionView extends ItemView {
         if (!tpl) return;
         const R = this.plugin.riscript;
         if (R.pending(tpl.title + tpl.from + tpl.to + tpl.content)) return;
-        const ctx = Object.assign({}, this.streamCtx(), choiceRules(this.plugin.mailData.constants));
+        const ctx = this.charCtx(this.plugin.mailData.constants);
         const ev = (line, extra) => R.evalTrim(line, extra ? Object.assign({}, ctx, extra) : ctx);
         const title = ev(tpl.title);
         const from = ev(tpl.from);
@@ -275,7 +275,7 @@ class CompanionView extends ItemView {
         const R = this.plugin.riscript;
         const { section, body } = parseNewsLine(raw);
         if (R.pending(section + " " + body)) return;
-        const ctx = this.newsCtx();
+        const ctx = this.charCtx(this.plugin.newsData.constants);
         this.feed.push([
             { cls: "section", text: section && R.evalTrim(section, ctx) },
             { cls: "body", text: R.evalTrim(body, ctx) },
@@ -285,7 +285,7 @@ class CompanionView extends ItemView {
     chyronStrip(raw) {
         const R = this.plugin.riscript;
         const pool = this.plugin.newsData.messages;
-        const ctx = this.newsCtx();
+        const ctx = this.charCtx(this.plugin.newsData.constants);
         // A fresh count per pass: anything from a single headline up to the max (capped by the pool).
         const cap = Math.min(tuning().newsChyronMax, pool.length);
         const count = cap > 0 ? randInt(1, cap) : 0;
@@ -298,9 +298,9 @@ class CompanionView extends ItemView {
         }
         return lines.join("  •  ");
     }
-    // The news evaluation context: the shown character's vars + the shared news constants — one recipe for the feed beat and the chyron alike.
-    newsCtx() {
-        return Object.assign({}, this.streamCtx(), choiceRules(this.plugin.newsData.constants));
+    // A character-context evaluation recipe: the shown character's vars (streamCtx) with a mode's own constants/variables map layered on top as choice rules. The one assembly every character-referencing source uses (stream layers its set's vars, mail and news their constants).
+    charCtx(vars) {
+        return Object.assign({}, this.streamCtx(), choiceRules(vars));
     }
     // Character template vars with safe defaults. Pronouns: slash-sep -> $they/$them/$their (4th/5th -> $theirs/$themself). Deeds/topics: verb-initial phrases for inflection.
     streamCtx() {
