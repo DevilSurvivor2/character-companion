@@ -169,11 +169,13 @@ class CompanionSettingTab extends PluginSettingTab {
             await this.commit(save, rerender);
         }));
     }
-    // One text-input setting: a string read through get()/set() and persisted. set() owns any trimming and side effects (a pill relabel, a pill-grid rebuild). Commits on the native "change" (click away / Enter), NOT per keystroke — a save can re-render the open panel, which mustn't fire mid-typing.
-    addTextSetting(container, { name, desc, placeholder, get, set, save, rerender = false }) {
+    // One text-input setting: a string read through get()/set() and persisted. set() owns any trimming and side effects (a pill relabel, a pill-grid rebuild); `configure(setting)` may decorate the row before the input lands (the character Name row adds its toggle icons). Commits on the native "change" (click away / Enter), NOT per keystroke — a save can re-render the open panel, which mustn't fire mid-typing.
+    addTextSetting(container, { name, desc, placeholder, get, set, save, rerender = false, configure }) {
         const setting = new Setting(container).setName(name);
         if (desc)
             setting.setDesc(desc);
+        if (configure)
+            configure(setting);
         setting.addText((t) => {
             if (placeholder != null)
                 t.setPlaceholder(placeholder);
@@ -866,20 +868,18 @@ class CompanionSettingTab extends PluginSettingTab {
         // Characters live in character-data.json now, so every field persists there (not via saveSettings). A rerender is only needed when the change alters which/what sprite shows (name in pills, sprite path).
         const save = () => this.plugin.saveDataFile("characterData");
         const saveRender = () => this.plugin.saveDataFile("characterData", true);
-        new Setting(box)
-            .setName("Name")
-            .then((s) => this.addCharacterToggles(s, character))
-            .addText((t) => {
-            t.setPlaceholder("(unnamed)");
-            t.setValue(character.name);
-            // Commit on click-away like addTextSetting — the save re-renders the open panel.
-            t.inputEl.addEventListener("change", async () => {
-                character.name = t.inputEl.value;
-                editor.refreshPillLabel(character.id, character.name || "(unnamed)");
+        this.addTextSetting(box, {
+            name: "Name",
+            placeholder: "(unnamed)",
+            configure: (s) => this.addCharacterToggles(s, character),
+            get: () => character.name,
+            set: (v) => {
+                character.name = v;
+                editor.refreshPillLabel(character.id, v || "(unnamed)");
                 this.rebuildPillGrid("root");
                 this.rebuildPillGrid("sidebar");
-                await saveRender();
-            });
+            },
+            save: saveRender,
         });
         this.addTextSetting(box, {
             name: "Sprite path",
