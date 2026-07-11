@@ -332,7 +332,7 @@ class CompanionSettingTab extends PluginSettingTab {
         new Setting(c)
             .setName("Allowed idle animations")
             .setDesc("Click to enable or disable. Dimmed means off.");
-        this.renderAnimToggles(c.createDiv({ cls: "cc-pill-grid" }), "idle");
+        this.renderAnimToggles(c.createDiv(), "idle");
         new Setting(c).setName("Click behavior").setHeading();
         this.addSliderSetting(c, {
             name: "Surprise chance", unit: "%",
@@ -348,7 +348,7 @@ class CompanionSettingTab extends PluginSettingTab {
         new Setting(c)
             .setName("Allowed surprise animations")
             .setDesc("Click to enable or disable. Dimmed means off.");
-        this.renderAnimToggles(c.createDiv({ cls: "cc-pill-grid" }), "surprise");
+        this.renderAnimToggles(c.createDiv(), "surprise");
     }
     renderDisplayTab(c) {
         this.tabIntro(c, "Where the characters appear, how big they are, and how fast they move.");
@@ -737,34 +737,28 @@ class CompanionSettingTab extends PluginSettingTab {
         this.addTextarea(box, { get: () => program.content, set: (v) => (program.content = v), save, rows: 6 });
     }
     // Render an on/off pill per animation of a role, wired to its settings flag map and drag-paintable. Shared by the idle and surprise grids.
-    renderAnimToggles(grid, role) {
+    renderAnimToggles(host, role) {
         const pool = ANIM_POOLS[role];
         const flags = this.plugin.settings[pool.flag];
-        this.paintGrid(grid, pool.all.map((name) => ({
+        this.paintGrid(host, pool.all.map((name) => ({
             // Display label: explicit row label, else the capitalised name.
             label: ANIM_BY_NAME[name].label ?? name[0].toUpperCase() + name.slice(1),
             get: () => flags[name],
             set: (v) => { flags[name] = v; },
         })));
     }
-    // A grid of toggle pills with drag-paint bulk select: pressing a pill flips it, and that value paints onto every pill the pointer slides across. entries = [{ label, get, set }]; the stroke saves once on release.
-    paintGrid(grid, entries, save = null) {
-        grid.empty();
+    // A grid of toggle pills with drag-paint bulk select: pressing a pill flips it, and that value paints onto every pill the pointer slides across. entries = [{ label, get, set }]; the stroke saves once on release. Builds a FRESH grid element into `host` each call, so the gesture listeners and pill lookup never outlive one paint.
+    paintGrid(host, entries, save = null) {
+        const grid = host.createDiv({ cls: "cc-pill-grid" });
         const byPill = new Map();
         for (const e of entries) {
             const pill = grid.createEl("button", { cls: "cc-pill", text: e.label });
             pill.classList.toggle("cc-pill-active", e.get());
             byPill.set(pill, e);
         }
-        // The pill lookup AND the save target are refreshed on every rebuild; the gesture is wired once. Storing save on the grid keeps the once-wired `end` closure from capturing the first rebuild's save forever.
-        grid.__ccPills = byPill;
-        grid.__ccSave = save;
-        if (grid.__ccPainted)
-            return;
-        grid.__ccPainted = true;
         let pointerId = null, value = false;
         const paint = (pill) => {
-            const e = pill && grid.__ccPills.get(pill);
+            const e = pill && byPill.get(pill);
             if (!e || e.get() === value)
                 return;
             e.set(value);
@@ -772,10 +766,10 @@ class CompanionSettingTab extends PluginSettingTab {
         };
         grid.addEventListener("pointerdown", (e) => {
             const pill = e.target instanceof Element ? e.target.closest(".cc-pill") : null;
-            if (e.button !== 0 || !pill || !grid.__ccPills.has(pill))
+            if (e.button !== 0 || !pill || !byPill.has(pill))
                 return;
             pointerId = e.pointerId;
-            value = !grid.__ccPills.get(pill).get();
+            value = !byPill.get(pill).get();
             capturePointer(grid, e.pointerId);
             paint(pill);
         });
@@ -793,7 +787,7 @@ class CompanionSettingTab extends PluginSettingTab {
             releasePointer(grid, pointerId);
             pointerId = null;
             // A press always flips the pressed pill, so a finished stroke always changed something — persist it (to a list's own file when `save` is given).
-            void this.commit(grid.__ccSave);
+            void this.commit(save);
         };
         grid.addEventListener("pointerup", end);
         grid.addEventListener("pointercancel", end);
@@ -814,24 +808,24 @@ class CompanionSettingTab extends PluginSettingTab {
     flagPills(registry, flags) {
         return registry.map((r) => ({ label: r.label, get: () => flags[r.key], set: (v) => { flags[r.key] = v; } }));
     }
-    // Mount one enable-pill grid on the tab being rendered: create its div, store the ref its PILL_GRIDS row names, and paint it. The render tabs call this instead of repeating the div + ref + rebuild by hand.
+    // Mount one enable-pill grid on the tab being rendered: create its host div, store the ref its PILL_GRIDS row names, and paint it. The render tabs call this instead of repeating the div + ref + rebuild by hand.
     mountPillGrid(container, id) {
-        this[PILL_GRIDS[id].grid] = container.createDiv({ cls: "cc-pill-grid" });
+        this[PILL_GRIDS[id].grid] = container.createDiv();
         this.rebuildPillGrid(id);
     }
-    // Repaint one enable-pill grid from its PILL_GRIDS descriptor: skip an off-screen grid (isConnected — a rebuild triggered from another tab is harmless), show the row's empty-state message when it has one and there are no entries, else drag-paint the pills.
+    // Repaint one enable-pill grid from its PILL_GRIDS descriptor into its host, fresh (paintGrid rebuilds the grid element, so nothing stale survives): skip an off-screen host (isConnected — a rebuild triggered from another tab is harmless), show the row's empty-state message when it has one and there are no entries, else drag-paint the pills.
     rebuildPillGrid(id) {
         const g = PILL_GRIDS[id];
-        const grid = this[g.grid];
-        if (!grid || !grid.isConnected)
+        const host = this[g.grid];
+        if (!host || !host.isConnected)
             return;
+        host.empty();
         const entries = g.entries(this);
         if (g.empty && entries.length === 0) {
-            grid.empty();
-            grid.createDiv({ cls: "cc-empty", text: g.empty });
+            host.createDiv({ cls: "cc-pill-grid" }).createDiv({ cls: "cc-empty", text: g.empty });
             return;
         }
-        this.paintGrid(grid, entries, g.save ? () => g.save(this) : null);
+        this.paintGrid(host, entries, g.save ? () => g.save(this) : null);
     }
     // Render the per-character toggle icons (CHARACTER_TOGGLES) into a Setting row: one extra button each, flipping its boolean and reflecting state via "cc-toggle-active".
     addCharacterToggles(setting, character) {
