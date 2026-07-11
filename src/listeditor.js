@@ -19,8 +19,6 @@ class ListEditor {
         this.suppressNextClick = false;
     }
     get plugin() { return this.tab.plugin; }
-    // Persist a list mutation through the tab's shared commit tail. Every list is backed by its own data file, so cfg.save always points there.
-    persist() { return this.tab.commit(this.cfg.save); }
     // Build the Add button, the pill grid, and the editor host into containerEl.
     mount(containerEl) {
         new Setting(containerEl)
@@ -35,7 +33,7 @@ class ListEditor {
             if (this.cfg.onAdd)
                 this.cfg.onAdd(item);
             this.editingId = item.id;
-            await this.persist();
+            await this.cfg.save();
             this.cfg.onMutate();
             this.rebuildPills();
             this.renderEditor();
@@ -139,7 +137,7 @@ class ListEditor {
         // Mirror the pills' new DOM order into the list.
         const order = [...this.gridEl.querySelectorAll(".cc-pill")].map((el) => el.dataset.ccId);
         this.cfg.items().sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
-        await this.persist();
+        await this.cfg.save();
         this.cfg.onMutate();
     }
     select(id) {
@@ -174,7 +172,7 @@ class ListEditor {
         if (this.cfg.onDelete)
             this.cfg.onDelete(id);
         this.editingId = null;
-        await this.persist();
+        await this.cfg.save();
         this.cfg.onMutate();
         this.rebuildPills();
         this.renderEditor();
