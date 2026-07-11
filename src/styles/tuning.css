@@ -80,7 +80,9 @@
     --cc-aes-heart-rise-max: 260px;
     --cc-aes-heart-duration-min: 1.6;   /* seconds */
     --cc-aes-heart-duration-max: 3;
-    --cc-aes-heart-sway: 26px;          /* max horizontal snake amplitude */
+    --cc-aes-heart-sway-min: 8px;       /* horizontal snake amplitude, rolled per waypoint in [min, max] */
+    --cc-aes-heart-sway-max: 26px;
+    --cc-aes-heart-fade: 0.6;           /* fraction of the rolled opacity gone by the top (the last waypoint snaps to 0) */
     --cc-aes-heart-steps-min: 3;        /* snake waypoints */
     --cc-aes-heart-steps-max: 6;
     --cc-aes-emoji-size-min: 20px;
@@ -88,6 +90,7 @@
     --cc-aes-emoji-duration-min: 2.2;   /* seconds to fall */
     --cc-aes-emoji-duration-max: 4.5;
     --cc-aes-emoji-drift: 40px;         /* max horizontal drift while falling */
+    --cc-aes-emoji-x-max: 90;           /* spawn x, rolled in [0, max] (% of the panel width) */
 
     /* Oracle mode (reactive feed). Timings in ms; chances 0–1. */
     --cc-oracle-debounce: 1200ms;       /* wait after typing stops before classifying */
@@ -103,10 +106,12 @@
     --cc-blog-handle-digit-max: 3;       /* most trailing digits */
     --cc-blog-handle-max-len: 7;         /* max characters per handle word */
 
-    /* News mode (headline feed OR bottom-slot chyron — one face at a time). The chyron owns no cadence: every pass is cued by a news feed beat (the newsMinMs/newsMaxMs setting), so no interval var lives here. */
+    /* Universal hijack transition: the ONE fade every takeover uses, in and out — a chyron pass or program bubble over the react bar, a program airing's cover over the scene. Also the chyron scroll's start delay, so the bar is fully in before the strip moves. */
+    --cc-hijack-fade: 200ms;
+
+    /* News mode (headline feed OR bottom-bar chyron — one face at a time). The chyron owns no cadence: every pass is cued by a news feed beat (the newsMinMs/newsMaxMs setting), so no interval var lives here. */
     --cc-news-chyron-max: 3;        /* MAX headlines joined per chyron pass; each pass picks a random count 1..max */
     --cc-news-chyron-speed: 55;     /* scroll speed, px per second (a longer strip takes proportionally longer) */
-    --cc-news-chyron-fade: 200ms;   /* bar fade-in/out; also the scroll's start delay, so the bar is fully in before the strip moves */
 
     /* Program mode (scheduled broadcast). The airing lasts as long as its content takes to play — each line holds for the shared quote staying time (--cc-quote-* / quoteDurationMs) — so it needs no duration knob of its own. */
 

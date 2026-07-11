@@ -47,10 +47,8 @@ const ctx = await esbuild.context({
   // ??=/?. native instead of transpiled.
   target: "es2022",
   platform: "browser",
-  loader: { ".json": "json" },
   banner: { js: ritaLazy },
   outfile: "main.js",
-  treeShaking: true,
   minify: prod,
   sourcemap: prod ? false : "inline",
   logLevel: "info",

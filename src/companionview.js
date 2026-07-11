@@ -54,6 +54,8 @@ class CompanionView extends ItemView {
         this.observer = null;
         // Fires repositionOverlays when the panel's own box changes (split-divider drag) — the case window "resize" / "layout-change" both miss.
         this.resizeObserver = null;
+        // The window the panel was last rendered in; onLayoutChange re-renders when the leaf crosses a window boundary (into or out of a popout).
+        this.renderWin = null;
         // Stream state: chat overlay, background-cycle timer + current image + its bag, plus a bag for the "show another character" button.
         this.feed = new CommentFeed(this);
         // The feed is a passive surface; each FEED_SOURCES row owns its own timer (stop handle) and draws without repeats from its own bag. The Oracle owns three more timers of its own.
@@ -67,10 +69,10 @@ class CompanionView extends ItemView {
         this.bgSig = "";
         this.bgBag = new Bag();
         this.sidebarBag = new Bag();
-        // Program state: the minute-boundary scheduler's stop handle, and the currently-airing program (null = none) as { url, lines } — url hijacks the stream bg + hides the sprite (paintBackground), lines play one at a time in the bottom slot (Aesthetics.buildProgram) and their completion ends the airing.
+        // Program state: the minute-boundary scheduler's stop handle, and the currently-airing program (null = none) as { url, lines } — url fades in over the scene on the anchor's cover layer (paintBackground), lines play one at a time in the bottom bar (Aesthetics.buildProgram) and their completion ends the airing.
         this.programStop = null;
         this.program = null;
-        // The aesthetics overlay (tickers + bottom-bar slot + particle layer) — owns its own DOM, timers, and slot occupant; rebuilt per render.
+        // The aesthetics overlay (tickers + bottom bar + particle layer) — owns its own DOM, timers, and bottom-bar occupants; rebuilt per render.
         this.aesthetics = new Aesthetics(this);
     }
     get settings() { return this.plugin.settings; }
@@ -84,13 +86,13 @@ class CompanionView extends ItemView {
         return "ghost";
     }
     async onOpen() {
-        // Pause the sprite (and stream) when the panel is off screen or the window blurred; resume when it returns.
-        this.registerDomEvent(activeDocument, "visibilitychange", () => this.sync());
-        this.registerDomEvent(activeWindow, "blur", () => this.sync());
-        this.registerDomEvent(activeWindow, "focus", () => this.sync());
+        // Pause the sprite (and stream) when the panel is off screen or the window blurred; resume when it returns. Listeners pin to the MAIN window — the panel only runs there (isLive), so the focused `activeWindow` is never the right target.
+        this.registerDomEvent(document, "visibilitychange", () => this.sync());
+        this.registerDomEvent(window, "blur", () => this.sync());
+        this.registerDomEvent(window, "focus", () => this.sync());
         // Re-anchor viewport-positioned overlays after panel moves. Three sources: window resize, layout-change, ResizeObserver.
-        this.registerDomEvent(activeWindow, "resize", () => this.repositionOverlays());
-        this.registerEvent(this.app.workspace.on("layout-change", () => this.repositionOverlays()));
+        this.registerDomEvent(window, "resize", () => this.repositionOverlays());
+        this.registerEvent(this.app.workspace.on("layout-change", () => this.onLayoutChange()));
         this.resizeObserver = new ResizeObserver(() => this.repositionOverlays());
         this.resizeObserver.observe(this.contentEl);
         // The now-playing status re-reads the active file on a switch (and on refocus via sync) — no timer of its own, so it isn't sync-gated.
@@ -147,18 +149,17 @@ class CompanionView extends ItemView {
         setting.open();
         setting.openTabById(this.plugin.manifest.id);
     }
-    // Icon-column action: flip one feed mode's `<key>Enabled` flag and apply it IN PLACE — every mode is only an overlay/feed source (never the sprite's DOM), so sync() reconciles it and relightIconButtons() re-lights the button; no re-render (which would tear the walker down mid-beat). Stream additionally resets its uptime/viewer counters when going live and wakes the sprite either way (streamEnabled forces no-sleep, read live via isAsleep()).
+    // Icon-column action: flip one feed mode's `<key>Enabled` flag and apply it IN PLACE — every mode is only an overlay/feed source (never the sprite's DOM), so sync() reconciles everything, button light included; no re-render (which would tear the walker down mid-beat). The immediate sync of every open panel OWNS the reconcile (modes are panel-only state — the stage reads none of these flags), so the flags persist via a bare saveData rather than saveSettings, whose applyChange tail would reconcile the same panels a second time. Stream additionally resets its uptime/viewer counters when going live and wakes the sprite either way (streamEnabled forces no-sleep, read live via isAsleep()).
     toggleMode(key) {
         const on = this.settings[key + "Enabled"] = !this.settings[key + "Enabled"];
         if (key === "stream" && on)
             this.aesthetics.resetCounters();
-        void this.plugin.saveSettings();
-        this.sync();
-        this.relightIconButtons();
+        this.plugin.eachView((view) => view.sync());
+        void this.plugin.saveData(this.settings);
         if (key === "stream")
             this.walker?.wake();
     }
-    // Reflect each toggle button's `active` predicate onto its lit state (initial paint and after an in-place toggle like stream mode).
+    // Reflect each toggle button's `active` predicate onto its lit state. Part of sync()'s reconcile, so a toggle lights the button on EVERY open panel, not just the one clicked.
     relightIconButtons() {
         for (const { def, btn } of this.iconButtons ?? [])
             if (def.active)
@@ -168,6 +169,13 @@ class CompanionView extends ItemView {
     repositionOverlays() {
         this.feed.reposition();
         this.walker?.positionBubble();
+    }
+    // A layout change that carries the panel across a window boundary (into or out of a popout) re-renders — renderBody swaps between the real panel and the popout notice; any other layout change only moves the panel, so the overlays just re-anchor.
+    onLayoutChange() {
+        if (this.contentEl.win !== this.renderWin)
+            this.render();
+        else
+            this.repositionOverlays();
     }
     // Tear down the current sprite's timers before a re-render or close. Its bubble lives on <body>, outside the panel root.empty() clears, so drop it explicitly here too.
     cleanupWalker() {
@@ -216,8 +224,11 @@ class CompanionView extends ItemView {
             () => this.checkPrograms());
         if (!programScheduled)
             this.endProgram();
+        // The feed's font var rides the reconcile like everything else (applyFont no-ops while unmounted; the mount above just applied it fresh).
+        this.feed.applyFont();
         this.paintBackground();
         this.aesthetics.sync();
+        this.relightIconButtons();
     }
     // One stream beat: evaluate the drawn line against the character context + its own set's variables (carried on the pool item — see FEED_SOURCES, no reverse lookup), push. Plain lines pass through; unloaded engine -> skip beat.
     pushComment(item) {
@@ -265,11 +276,11 @@ class CompanionView extends ItemView {
             { cls: "tags", text: ev(toks.slice(1, i).join(" ")) },
         ], "cc-feed-bubble-blog");
     }
-    // One news beat, dressed by the face switch. Chyron face (default): hand the slot occupant a lazy strip builder — it runs only when the chyron is free, so a busy pass or a missing occupant (mid-program, not live) skips the beat before anything more is drawn or evaluated. Feed face: split off the headline's optional leading [SECTION] (pushBlog's structural split), evaluate section + body against the news context, push as a two-part bubble (the empty-section part self-drops in feed.push). Plain lines pass through; unloaded engine -> skip beat.
+    // One news beat, dressed by the face switch. Chyron face (default): hand chyronPass a lazy strip builder — it runs only when a pass can go out, so a busy pass or a program airing skips the beat before anything more is drawn or evaluated. Feed face: split off the headline's optional leading [SECTION] (pushBlog's structural split), evaluate section + body against the news context, push as a two-part bubble (the empty-section part self-drops in feed.push). Plain lines pass through; unloaded engine -> skip beat.
     pushNews(raw) {
         if (!raw) return;
         if (!this.settings.newsToFeed) {
-            this.aesthetics.chyronPass?.(() => this.chyronStrip(raw));
+            this.aesthetics.chyronPass(() => this.chyronStrip(raw));
             return;
         }
         const R = this.plugin.riscript;
@@ -281,7 +292,7 @@ class CompanionView extends ItemView {
             { cls: "body", text: R.evalTrim(body, ctx) },
         ], "cc-feed-bubble-news");
     }
-    // The chyron's content half (the slot occupant is pure display): one pass's strip — the beat's own draw plus up to --cc-news-chyron-max - 1 more from the SAME news bag, so both faces share one non-repeat rotation. Each line's [SECTION] is dropped (the chyron shows headlines, not labels) and its body evaluated against the news context; a line the unloaded engine can't render is skipped. Returns "" when nothing renders — the chyron skips an empty strip.
+    // The chyron's content half (the bar element is pure display): one pass's strip — the beat's own draw plus up to --cc-news-chyron-max - 1 more from the SAME news bag, so both faces share one non-repeat rotation. Each line's [SECTION] is dropped (the chyron shows headlines, not labels) and its body evaluated against the news context; a line the unloaded engine can't render is skipped. Returns "" when nothing renders — the chyron skips an empty strip.
     chyronStrip(raw) {
         const R = this.plugin.riscript;
         const pool = this.plugin.newsData.messages;
@@ -331,7 +342,7 @@ class CompanionView extends ItemView {
     nextBg() {
         return this.bgBag.next(resolvePathList(this.app, this.settings.streamBackgrounds));
     }
-    // Program scheduler tick (one per minute boundary): air a program whose scheduled minute matches the clock (`% 60` folds the ":00"-as-60 step back to minute 0 — see PROGRAM_SCHEMA). Only airable candidates (non-empty content) enter the draw, and a same-minute tie is broken at random. Only one airs at a time — an in-progress airing blocks a new trigger. An airing keeps the raw content lines (it lives as long as they take to play — see Aesthetics.buildProgram) and picks + holds ONE resolved backdrop for the whole run (no mid-program switch). The repaint hijacks the backdrop; the aes sync hands the bottom slot to the program occupant, which drives the sequence and calls endProgram when done.
+    // Program scheduler tick (one per minute boundary): air a program whose scheduled minute matches the clock (`% 60` folds the ":00"-as-60 step back to minute 0 — see PROGRAM_SCHEMA). Only airable candidates (non-empty content) enter the draw, and a same-minute tie is broken at random. Only one airs at a time — an in-progress airing blocks a new trigger. An airing keeps the raw content lines (it lives as long as they take to play — see Aesthetics.buildProgram) and picks + holds ONE resolved backdrop for the whole run (no mid-program switch). The repaint fades the cover layer in; the aes sync hands the bottom bar to the program occupant, which drives the sequence and calls endProgram when done.
     checkPrograms() {
         if (this.program)
             return;
@@ -346,7 +357,7 @@ class CompanionView extends ItemView {
         this.paintBackground();
         this.aesthetics.sync();
     }
-    // End the current airing (last line played, or the panel went not-live / closed): drop the airing and reconcile — restore the backdrop + sprite and hand the bottom slot back to whatever else wants it. Idempotent.
+    // End the current airing (last line played, or the panel went not-live / closed): drop the airing and reconcile — fade the cover layer back out and hand the bottom bar back to whatever else wants it. Idempotent.
     endProgram() {
         if (!this.program)
             return;
@@ -373,7 +384,7 @@ class CompanionView extends ItemView {
             teardown();
         this.builtFx = null;
     }
-    // Paint the stream overlay on the current anchor. The backdrop shows whenever streaming (regardless of liveness, picking its first image lazily); effects are gated on `running` (live), torn down when unseen. A live program hijacks the whole backdrop on top of all this.
+    // Paint the stream overlay on the current anchor. The backdrop shows whenever streaming (regardless of liveness, picking its first image lazily); effects are gated on `running` (live), torn down when unseen. A live program hijacks the whole scene on top of all this.
     paintBackground() {
         const anchor = this.contentEl.querySelector(".cc-anchor");
         if (!anchor)
@@ -387,12 +398,13 @@ class CompanionView extends ItemView {
         if (streaming && !this.bgUrl)
             this.bgUrl = this.nextBg();
         const running = streaming && this.isLive();
-        // A live airing WITH a background hijacks the backdrop: its held image replaces the stream bg and the sprite hides (cc-program) for the airing. A background-less program plays its content bubble over the normal scene (no hijack). Effects (gated on `running`) and aesthetics are untouched — the program only owns the backdrop layer + the sprite's visibility.
+        // A live airing WITH a background hijacks the scene: its held image fades in on the anchor's cover layer, over the sprite and the backdrop (the universal hijack transition — see panel.css), and fades back out to the untouched scene when the airing ends. A background-less program plays its content bubble over the normal scene (no hijack). --cc-program-bg is only ever written, never cleared, so the image survives its own fade-out.
         const program = (this.program && this.program.url && this.isLive()) ? this.program.url : null;
-        const bg = program || (streaming && this.bgUrl);
-        anchor.classList.toggle("cc-streaming", !!bg);
+        anchor.classList.toggle("cc-streaming", !!(streaming && this.bgUrl));
         anchor.classList.toggle("cc-program", !!program);
-        anchor.setCssProps({ "--cc-bg": bg ? `url("${bg}")` : "none" });
+        anchor.setCssProps({ "--cc-bg": streaming && this.bgUrl ? `url("${this.bgUrl}")` : "none" });
+        if (program)
+            anchor.setCssProps({ "--cc-program-bg": `url("${program}")` });
         // Reconcile effects: toggle each effect's class, build/teardown DOM to match.
         if (!this.builtFx || this.builtFx.anchor !== anchor) {
             this.teardownEffects();
@@ -415,9 +427,10 @@ class CompanionView extends ItemView {
     }
     renderNow() {
         const root = this.contentEl;
+        this.renderWin = root.win;
         this.cleanupWalker();
         this.teardownEffects();
-        // The aesthetics DOM lives under the about-to-be-emptied root, so tear it down first (timers, slot occupant, stale refs); renderBody rebuilds it when there's a sprite.
+        // The aesthetics DOM lives under the about-to-be-emptied root, so tear it down first (timers, bottom-bar occupant, stale refs); renderBody rebuilds it when there's a sprite.
         this.aesthetics.teardown();
         root.empty();
         root.addClass("cc-root");
@@ -429,6 +442,11 @@ class CompanionView extends ItemView {
     }
     // Build the panel body: an empty-state message, a "sprite not found" notice, or the anchor + stage-less Walker (speed 0 — rests/animates/reacts, dozes off-stream).
     renderBody(root) {
+        // Popout windows are out of the plugin's scope: the panel's bubble and feed live on the main window's <body>, so a popped-out leaf gets a notice instead of a half-working sprite. (isLive is false there too, so nothing else runs.)
+        if (root.win !== window) {
+            root.createDiv({ cls: "cc-empty", text: "The companion panel doesn't run in a popout window. Move it back into the main window." });
+            return;
+        }
         const character = this.getActiveCharacter();
         if (!character) {
             root.createDiv({ cls: "cc-empty", text: this.plugin.characterData.characters.length === 0
@@ -448,8 +466,8 @@ class CompanionView extends ItemView {
         const anchor = root.createDiv({ cls: "cc-anchor" });
         const spriteWrap = anchor.createDiv({ cls: "cc-sprite-wrap" });
         const sprite = spriteWrap.createEl("img", { cls: "cc-sprite" });
-        // Bubble lives on <body> (same level as the comment feed), NOT inside the panel, so the workspace-leaf frame can never clip it — it stays fully visible even past the panel edge. Being off-panel, root.empty() can't reap it, so cleanupWalker removes it. The walker positions it against the sprite picture (`sprite`) each time it speaks; the view re-runs that on resize/layout-change while it's up.
-        const bubble = activeDocument.body.createDiv({ cls: "cc-bubble" });
+        // Bubble lives on the panel's own <body> (same level as the comment feed), NOT inside the panel, so the workspace-leaf frame can never clip it — it stays fully visible even past the panel edge. Being off-panel, root.empty() can't reap it, so cleanupWalker removes it. The walker positions it against the sprite picture (`sprite`) each time it speaks; the view re-runs that on resize/layout-change while it's up.
+        const bubble = root.doc.body.createDiv({ cls: "cc-bubble" });
         this.walker = new Walker(null, this.plugin, character, { wrapEl: spriteWrap, imgEl: sprite, bubbleEl: bubble, bubbleAnchorEl: sprite }, urls, 0);
         // The aesthetics overlay sits on the anchor, above the sprite (its sync gates every piece).
         this.aesthetics.build(anchor);
@@ -465,12 +483,12 @@ class CompanionView extends ItemView {
             btn.addEventListener("click", () => def.run(this));
             this.iconButtons.push({ def, btn });
         }
-        this.relightIconButtons();
+        // No relight here: renderNow's tail sync() reconciles the lit states along with everything else.
     }
-    // Foreground AND actually on screen: a collapsed sidebar / background tab is display:none, so offsetParent is null. Computed fresh so no stale reading wedges it.
+    // Foreground AND actually on screen AND in the main window: a collapsed sidebar / background tab is display:none, so offsetParent is null, and a popped-out leaf is out of the plugin's scope entirely (renderBody shows a notice there). Computed fresh so no stale reading wedges it.
     isLive() {
         const el = this.contentEl;
-        return appActive() && !!el && el.offsetParent !== null;
+        return appActive() && !!el && el.win === window && el.offsetParent !== null;
     }
 }
 module.exports = { CompanionView, VIEW_TYPE_COMPANION };

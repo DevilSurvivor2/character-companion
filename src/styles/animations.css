@@ -1,5 +1,5 @@
 
-/* ANIMATIONS — one behaviour = one class = one @keyframes, on the image. Each keyframe is transform-only (+ translateY where needed). Up (negative translateY) is capped at -3% (= --cc-rest-down); down (positive translateY) is unlimited (dip first, then rise). Directional keyframes read var(--cc-dir) for L/R mirror. */
+/* ANIMATIONS — one behaviour = one class = one @keyframes, on the image. Each class MUST declare exactly ONE animation (no comma-separated composites): the walker times an animation's end by reading duration × iteration-count off the computed style, and that read pairs wrongly on a composite. Each keyframe is transform-only (+ translateY where needed). Up (negative translateY) is capped at -3% (= --cc-rest-down); down (positive translateY) is unlimited (dip first, then rise). Directional keyframes read var(--cc-dir) for L/R mirror. */
 
 .cc-anim-shudder { animation: cc-anim-shudder 600ms ease; }
 @keyframes cc-anim-shudder {

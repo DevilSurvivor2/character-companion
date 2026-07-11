@@ -29,15 +29,15 @@ class CommentFeed {
         this.el = null;
     }
     get settings() { return this.plugin.settings; }
-    // The feed exists only while a source wants it; torn down (not preserved) when the panel goes away, rebuilt fresh on return.
+    // The feed exists only while a source wants it; torn down (not preserved) when the panel goes away, rebuilt fresh on return. It lives on the PANEL'S own <body> (never `activeDocument` — a focused popout must not adopt it; in practice always the main window, since the panel isn't live elsewhere).
     mount() {
         if (this.el)
             return;
-        this.el = activeDocument.body.createDiv({ cls: "cc-feed" });
+        this.el = this.view.contentEl.doc.body.createDiv({ cls: "cc-feed" });
         this.applyFont();
         this.reposition();
     }
-    // Override the shared --cc-stream-font on the bubbles when the user set a comment font (verbatim CSS font-family); empty clears back to the styles.css default. Bubbles inherit the property from the feed root. Re-run live from applyChange's repaint on a settings edit.
+    // Override the shared --cc-stream-font on the bubbles when the user set a comment font (verbatim CSS font-family); empty clears back to the styles.css default. Bubbles inherit the property from the feed root. Applied on mount and re-run by every sync(), so a font edit lands live.
     applyFont() {
         if (this.el)
             this.el.setCssProps({ "--cc-stream-font": this.settings.commentFont || "" });
@@ -52,18 +52,20 @@ class CommentFeed {
     reposition() {
         if (!this.el)
             return;
-        const root = activeDocument.querySelector(".workspace-split.mod-root");
-        const rect = (root ?? activeDocument.body).getBoundingClientRect();
+        // All geometry in the panel's own window, matching the body the feed is mounted on.
+        const { doc, win } = this.view.contentEl;
+        const root = doc.querySelector(".workspace-split.mod-root");
+        const rect = (root ?? doc.body).getBoundingClientRect();
         const panel = this.view.contentEl.getBoundingClientRect();
-        const left = panel.left + panel.width / 2 < activeWindow.innerWidth / 2;
-        const top = panel.top + panel.height / 2 < activeWindow.innerHeight / 2;
+        const left = panel.left + panel.width / 2 < win.innerWidth / 2;
+        const top = panel.top + panel.height / 2 < win.innerHeight / 2;
         this.el.classList.toggle("cc-feed-left", left);
         this.el.classList.toggle("cc-feed-right", !left);
         this.el.classList.toggle("cc-feed-top", top);
         this.el.classList.toggle("cc-feed-bottom", !top);
         this.el.setCssProps({
-            "--cc-feed-x": (left ? rect.left : activeWindow.innerWidth - rect.right) + "px",
-            "--cc-feed-y": (top ? rect.top : activeWindow.innerHeight - rect.bottom) + "px",
+            "--cc-feed-x": (left ? rect.left : win.innerWidth - rect.right) + "px",
+            "--cc-feed-y": (top ? rect.top : win.innerHeight - rect.bottom) + "px",
         });
     }
     // Add a bubble at the anchored corner. parts: plain string or [{cls, text}] array. Named parts get cc-feed-part-X classes, joined by <br>.

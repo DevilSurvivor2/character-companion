@@ -4,7 +4,7 @@
 // that class instead (SIDEBAR_BUTTONS/FEED_SOURCES in companionview.js, SLOT_OCCUPANTS in
 // aesthetics.js, PILL_GRIDS in companionsettingtab.js).
 const DEFAULT_ORACLE = require("../default-oracle-data.json");
-// Animation registry: one row = one animation class (keyframes in styles.css). role: surprise/idle (toggleable), sleep/flip/bob/tickle (playRole functions), effect (internal). directional: keyframe reads --cc-dir for L/R flip. root: false excludes bottom-of-window walkers.
+// Animation registry: one row = one animation class (keyframes in styles.css); each class declares exactly ONE animation — the walker's CSS duration reader depends on it (see animations.css). role: surprise/idle (toggleable), sleep/flip/bob/tickle (playRole functions), effect (internal). directional: keyframe reads --cc-dir for L/R flip. root: false excludes bottom-of-window walkers.
 const ANIMATIONS = [
     // surprise — click reactions; grid order is this order.
     { name: "shudder", role: "surprise" },
@@ -89,7 +89,7 @@ const SPECIAL_EFFECTS = [
     { key: "rain", label: "Rain" },
 ];
 const SPECIAL_EFFECT_KEYS = SPECIAL_EFFECTS.map((e) => e.key);
-// Stream aesthetics: in-panel livestream overlay. Each key toggles a piece — the four corner tickers plus "react", stream mode's bottom-slot occupant (see SLOT_OCCUPANTS). Numbers in styles.css; motion via WAAPI. Add a ticker: row + DOM in Aesthetics.build + CSS.
+// Stream aesthetics: in-panel livestream overlay. Each key toggles a piece — the four corner tickers plus "react", stream mode's bottom-bar occupant (see BOTTOM_OCCUPANTS). Numbers in styles.css; motion via WAAPI. Add a ticker: row + DOM in Aesthetics.build + CSS.
 const AESTHETICS = [
     { key: "uptime", label: "Uptime" },
     { key: "viewer", label: "Viewer" },
@@ -165,7 +165,7 @@ const MAIL_SCHEMA = [
     { key: "content", coerce: str },
     { key: "enabled", coerce: bool(true) },
 ];
-// Program: a scheduled full-panel "broadcast". Lives in program-data.json. 'label' is the admin-only pill label. 'background' is a plain stream-bg-style image field (comma-separated paths/emojis or a folder; drawn once per airing, no swap, no RiScript) — it hijacks the stream backdrop and hides the sprite. 'content' is a RiScript, multi-line script shown one line at a time as a bottom-slot bubble (SLOT_OCCUPANTS); the airing ENDS when the last line's hold elapses. 'schedule' is the airing slider's raw value: 0 = off, 1..59 = that minute past every hour (while the panel is live), 60 = the ":00" step — the top of the hour, stored as 60 so it can't collide with off. The scheduler matches `schedule % 60` against the clock minute.
+// Program: a scheduled full-panel "broadcast". Lives in program-data.json. 'label' is the admin-only pill label. 'background' is a plain stream-bg-style image field (comma-separated paths/emojis or a folder; drawn once per airing, no swap, no RiScript) — it fades in over the sprite and backdrop on the anchor's cover layer (the universal hijack transition). 'content' is a RiScript, multi-line script shown one line at a time as a bottom-bar bubble (BOTTOM_OCCUPANTS); the airing ENDS when the last line's hold elapses. 'schedule' is the airing slider's raw value: 0 = off, 1..59 = that minute past every hour (while the panel is live), 60 = the ":00" step — the top of the hour, stored as 60 so it can't collide with off. The scheduler matches `schedule % 60` against the clock minute.
 const PROGRAM_SCHEMA = [
     { key: "label", coerce: str },
     { key: "background", coerce: str },
@@ -187,7 +187,7 @@ function newItem(schema, overrides) {
 }
 // A shaped data-file object is "empty" when it holds no list content (every array value is empty). The first-run seed trigger — non-list values (activeCharacterId, the constants maps) don't count, so a file that only carries constants still seeds its lists.
 const shapeIsEmpty = (o) => Object.values(o).every((v) => !Array.isArray(v) || v.length === 0);
-// Shipped starter content for first-run seeding. Bulky defaults ship as default-*.json, not inline.
+// Shipped starter content for first-run seeding. Bulky defaults are authored in default-*.json and bundled into main.js by the build, not inlined here.
 const SEED_CHARACTERS = {
     activeCharacterId: "seed-hero",
     characters: [
@@ -298,7 +298,7 @@ const DATA_FILES = [
         },
     },
     {
-        // Seed reads the shipped default-oracle-data.json release asset to keep main.js lean. If absent, the oracle starts empty.
+        // Seed ships as default-oracle-data.json — a BUILD input (esbuild's json loader bundles it into main.js), authored as its own file only for editability; it is never read at runtime.
         prop: "oracleData", file: "oracle-data.json", create: false,
         seed: () => DEFAULT_ORACLE,
         shape: (raw) => {
@@ -401,7 +401,7 @@ const DEFAULT_SETTINGS = {
     blogEnabled: false,
     blogMinMs: 60000, // 1 min
     blogMaxMs: 180000, // 3 min
-    // ---- News mode (sidebar panel) ---- A fifth feed source: one-line headlines RiScript-filled against the shown character's context + news-data.json's constants (the mail recipe on the blog shape). One beat timer (a standard feed-source interval), two mutually exclusive faces: the bottom-slot chyron (default; each beat cues one pass — see SLOT_OCCUPANTS) or single comment-feed bubbles. Bulky content lives in news-data.json.
+    // ---- News mode (sidebar panel) ---- A fifth feed source: one-line headlines RiScript-filled against the shown character's context + news-data.json's constants (the mail recipe on the blog shape). One beat timer (a standard feed-source interval), two mutually exclusive faces: the bottom-bar chyron (default; each beat cues one pass — see BOTTOM_OCCUPANTS) or single comment-feed bubbles. Bulky content lives in news-data.json.
     newsEnabled: false,
     newsMinMs: 120000, // 2 min
     newsMaxMs: 360000, // 6 min

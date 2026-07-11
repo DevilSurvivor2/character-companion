@@ -2,6 +2,9 @@
 // Shared free functions: random draws, the timer primitives, CSS tuning access, sprite-path
 // resolution, and text utilities. Surface-agnostic — nothing in here may know about a
 // specific class; state rides on arguments, never on module state.
+// Main-window scoped: the plugin never runs in popout windows, so everything here addresses
+// the plugin's own `window`/`document` (or an element's own .win/.doc), never the focused
+// `activeWindow`/`activeDocument` — a popout holding focus must not redirect a mount or a measure.
 const { TFile, TFolder } = require("obsidian");
 // Comma-separated inline text (e.g. "Trickster, Rascal") → a trimmed, non-empty string list.
 const commaList = (v) => (v || "").split(",").map((s) => s.trim()).filter((s) => s.length > 0);
@@ -126,7 +129,7 @@ let _tuning = null;
 function tuning() {
     if (_tuning)
         return _tuning;
-    const cs = activeWindow.getComputedStyle(activeDocument.documentElement);
+    const cs = window.getComputedStyle(document.documentElement);
     const read = (k) => parseFloat(cs.getPropertyValue("--cc-" + k.replace(/([A-Z])/g, "-$1").toLowerCase()));
     // A hot reload can run this before styles.css is applied (every var reads NaN). Probe one known var; until styles land, hand back a live (uncached) reader so the next call re-reads once they do.
     if (isNaN(read("ease")))
@@ -145,7 +148,7 @@ function tuning() {
 }
 // Build an effect from --cc-fx-<key>-* CSS descriptors (-count N, -rand n lo hi per-particle CSS vars, -steps lo hi, -wander dLo dHi xr yr sLo sHi, -layers N). Returns teardown function.
 function buildEffect(anchor, key) {
-    const cs = activeWindow.getComputedStyle(anchor);
+    const cs = anchor.win.getComputedStyle(anchor);
     const prop = (suffix) => cs.getPropertyValue("--cc-fx-" + key + "-" + suffix).trim();
     const floats = (s) => s.split(/[\s,]+/).map(parseFloat).filter((n) => !isNaN(n));
     // -rand → [{name, lo, hi}], each rolled value landing on `--name`.
@@ -205,9 +208,11 @@ function whenStyled(fn) {
     // `window`, not `activeWindow`: a bare one-shot poll with nothing to cancel, and obsidianmd/prefer-window-timers wants timer calls addressed to `window`.
     window.requestAnimationFrame(() => whenStyled(fn));
 }
-// True only while this app window is foreground and focused — when the loops should run.
+// True only while the MAIN window is foreground and focused — when the loops should run.
+// Deliberately the plugin's own `document`, not `activeDocument`: a focused popout counts
+// as away (the plugin doesn't run in popouts), so everything pauses while one holds focus.
 function appActive() {
-    return activeDocument.visibilityState !== "hidden" && activeDocument.hasFocus();
+    return document.visibilityState !== "hidden" && document.hasFocus();
 }
 // Best-effort pointer capture (throws if unavailable/already released); swallow so every grab/drag site stays a one-liner.
 function capturePointer(el, id) {
@@ -231,12 +236,12 @@ function spriteTopInsetFraction(url) {
     if (cached !== undefined)
         return Promise.resolve(cached);
     const p = new Promise((resolve) => {
-        const img = activeDocument.createElement("img");
+        const img = document.createElement("img");
         img.onload = () => {
             let frac = 0;
             try {
                 const w = img.naturalWidth, h = img.naturalHeight;
-                const canvas = activeDocument.createElement("canvas");
+                const canvas = document.createElement("canvas");
                 canvas.width = w;
                 canvas.height = h;
                 const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -265,10 +270,10 @@ function spriteTopInsetFraction(url) {
     _spriteInsetCache.set(url, p);
     return p;
 }
-// How long a fully-revealed bubble of `text` holds, scaled to its content so short lines clear sooner and long (wrapped) ones linger. `budget` (quoteDurationMs) is spent over exactly one full line: chars-per-full-line = bubble max-width ÷ avg glyph width (--cc-quote-char-em × the bubble's own font-size, so it tracks max-width and theme scale), and the per-char rate falls out as budget ÷ that. Floored at --cc-quote-hold-min so a one-word burst still registers. The one staying-time rule, shared by the walker's speech bubble and the program-slot bubble.
+// How long a fully-revealed bubble of `text` holds, scaled to its content so short lines clear sooner and long (wrapped) ones linger. `budget` (quoteDurationMs) is spent over exactly one full line: chars-per-full-line = bubble max-width ÷ avg glyph width (--cc-quote-char-em × the bubble's own font-size, so it tracks max-width and theme scale), and the per-char rate falls out as budget ÷ that. Floored at --cc-quote-hold-min so a one-word burst still registers. The one staying-time rule, shared by the walker's speech bubble and the program's bottom-bar bubble.
 function bubbleHoldMs(bubbleEl, budget, text) {
     const T = tuning();
-    const fontPx = parseFloat(activeWindow.getComputedStyle(bubbleEl).fontSize) || 13;
+    const fontPx = parseFloat(bubbleEl.win.getComputedStyle(bubbleEl).fontSize) || 13;
     const charsPerLine = T.bubbleMaxWidth / (fontPx * T.quoteCharEm);
     const perChar = budget / charsPerLine;
     return Math.max(T.quoteHoldMin, perChar * text.length);

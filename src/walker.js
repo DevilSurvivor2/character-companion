@@ -13,9 +13,9 @@ const HELD_ACTIVITIES = [
     { name: "shake", chance: 1, run: (w, done) => w.holdShake(done) },
     { name: "escape", chance: "escapeChance", run: (w, done) => w.holdEscape(done) },
 ];
-// Total run time (ms) of the CSS animation on an element: longest duration × iteration count, read from the stylesheet. Computed duration is in seconds; a list takes the max.
+// Total run time (ms) of the CSS animation on an element: duration × iteration count, read from the stylesheet (computed duration is in seconds). AUTHORING RULE (see animations.css): every cc-anim class declares exactly ONE animation — the max-over-the-comma-list below is only a guard, and a composite animation would pair the longest duration with the FIRST iteration count.
 function animationDurationMs(el) {
-    const cs = activeWindow.getComputedStyle(el);
+    const cs = el.win.getComputedStyle(el);
     const longest = (cs.animationDuration || "0s")
         .split(",")
         .reduce((max, part) => Math.max(max, parseFloat(part) || 0), 0) * 1000;
@@ -38,7 +38,7 @@ class Walker {
         this.wrapEl = els.wrapEl;
         this.imgEl = els.imgEl;
         this.bubbleEl = els.bubbleEl;
-        // The window this sprite's DOM actually lives in (the popped-out one for a detached sidebar leaf). Captured once, never re-read from `activeWindow`: every timer below is a set/clear pair, and ids don't cross windows.
+        // The window this sprite's DOM actually lives in — always the main window (the panel refuses popouts, the stage is pinned there). Captured once and used for every timer AND every geometry read below, never `activeWindow`: timer ids don't cross windows, and a focused popout must not lend its dimensions to a main-window sprite.
         this.win = els.wrapEl.win;
         // Set only for a fixed (frame-escaping) sidebar bubble: the element whose head the bubble is JS-positioned over. Null for the floor bubble (an absolute child of its own walker wrap, positioned by CSS).
         this.bubbleAnchorEl = els.bubbleAnchorEl || null;
@@ -146,7 +146,7 @@ class Walker {
         const advance = Math.min(this.walkPace * dt, this.walkDist);
         this.walkDist -= advance;
         if (this.walkPace > 0)
-            this.advanceAlong(this.walkDir * advance, activeWindow.innerWidth);
+            this.advanceAlong(this.walkDir * advance, this.win.innerWidth);
         else
             this.arc(this.speed * dt);
         this.place();
@@ -156,7 +156,7 @@ class Walker {
     // Glide the image's (maybe mid-animation) transform back to rest: freeze the live pose inline, arm the eased transition, clear it next reflow so it eases to identity. Returns whether there was a pose to settle (caller waits --cc-ease only if so).
     easeImagePose() {
         const img = this.imgEl;
-        const current = activeWindow.getComputedStyle(img).transform;
+        const current = this.win.getComputedStyle(img).transform;
         this.stopAnimation();
         if (!current || current === "none")
             return false;
@@ -268,7 +268,7 @@ class Walker {
         this.setEasing(false);
         // walkDir/walkDist default to random (a walkaside passes an explicit minimum); walkPace starts at the walker's own speed. Cursor react may steer all three mid-walk.
         this.walkDir = dir ?? (Math.random() < 0.5 ? -1 : 1);
-        this.walkDist = remaining ?? Math.random() * T.walkMaxDistanceFrac * activeWindow.innerWidth;
+        this.walkDist = remaining ?? Math.random() * T.walkMaxDistanceFrac * this.win.innerWidth;
         this.walkPace = this.speed;
         this.mode = MODE.WALK;
     }
@@ -345,7 +345,7 @@ class Walker {
         const frameDt = this.dropLastT ? (now - this.dropLastT) / 1000 : 0;
         this.dropLastT = now;
         if (this.flickVel !== 0 && frameDt > 0) {
-            const width = activeWindow.innerWidth;
+            const width = this.win.innerWidth;
             const margin = this.margin();
             this.x += this.flickVel * frameDt;
             this.brakeFlick(frameDt);
@@ -586,7 +586,7 @@ class Walker {
         const node = this.bubbleEl.firstChild;
         const breaks = [];
         if (node) {
-            const range = activeDocument.createRange();
+            const range = this.bubbleEl.doc.createRange();
             let lineTop = null;
             for (let k = 0; k < text.length; k++) {
                 range.setStart(node, k);
@@ -654,7 +654,7 @@ class Walker {
         const inset = parseFloat(this.wrapEl.style.getPropertyValue("--cc-bubble-inset")) || 0;
         this.bubbleEl.setCssProps({
             left: (r.left + r.width / 2) + "px",
-            bottom: (activeWindow.innerHeight - r.top - inset + gap) + "px",
+            bottom: (this.win.innerHeight - r.top - inset + gap) + "px",
         });
     }
     // Answer a double-tap: a surprise animation or (optionally) a bob plus a spoken line. End the carry first (no bounce); settle to rest if nothing animated. (The sprite image only ever swaps via the chanced flip rest activity, never on a poke.)
@@ -694,7 +694,7 @@ class Walker {
     }
     // ---- pointer input: grab, carry, drop, double-tap ---- Clamp x to the visible margins and commit the position.
     moveTo(clientX) {
-        const width = activeWindow.innerWidth;
+        const width = this.win.innerWidth;
         const margin = this.margin();
         this.x = Math.min(width - margin, Math.max(margin, clientX));
         this.place();

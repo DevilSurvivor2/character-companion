@@ -41,9 +41,10 @@ const PILL_GRIDS = {
         entries: (t) => t.flagPills(AESTHETICS, t.plugin.settings.enabledAesthetics),
     },
 };
-// A slider/range labelled in a time unit ("sec"/"min") edits an ms-STORED setting: the base
-// helpers scale bounds and values through this map, so authoring stays in the readable unit
-// and the ms↔unit conversion has exactly one point. Any other unit ("%", "px") is label-only.
+// A slider/range labelled in a time unit ("sec"/"min") edits an ms-STORED setting. ONE
+// convention for both helpers: the <input> runs in the stored unit (ms) — min/max/step are
+// authored in the readable unit and scaled to ms bounds through this map, and only the
+// readout divides back for display. Any other unit ("%", "px") is label-only (factor 1).
 const MS_PER_UNIT = { sec: 1000, min: 60000 };
 // The settings tab: a tab bar over pages, each page a row in the tab table (this.tabs) below.
 class CompanionSettingTab extends PluginSettingTab {
@@ -145,19 +146,18 @@ class CompanionSettingTab extends PluginSettingTab {
     commit(save, rerender = false) {
         return save ? save() : this.plugin.saveSettings(rerender);
     }
-    // One slider setting: a native ".slider" over [min, max] stepped by step, with the live value shown to its LEFT (mirrors the dual-range row) and the unit carried in the name's brackets. The value is read/written through get()/set(), or `key` names a plugin-settings scalar directly. A "sec"/"min" unit means the stored value is ms (MS_PER_UNIT): bounds are authored in the display unit and format/parse default to the conversion; explicit format/parse/readout (the typewriter's string↔index map) still override.
-    addSliderSetting(container, { name, desc, unit, key, get, set, min, max, step = 1, save, rerender = false, format, parse, readout = (v) => String(v) }) {
+    // One slider setting: a native ".slider" over [min, max] stepped by step, with the live value shown to its LEFT (mirrors the dual-range row) and the unit carried in the name's brackets. The value is read/written through get()/set(), or `key` names a plugin-settings scalar directly. Same convention as addRangeSetting: the slider runs in the STORED unit — a "sec"/"min" unit means ms (MS_PER_UNIT), so min/max/step are authored in the display unit and scaled to ms here, and only the readout divides back. format/parse remap a non-numeric stored value onto the slider scale (the typewriter's string↔index map); readout overrides the display.
+    addSliderSetting(container, { name, desc, unit, key, get, set, min, max, step = 1, save, rerender = false, format = (v) => v, parse = (v) => v, readout }) {
         const div = MS_PER_UNIT[unit] ?? 1;
         get = get ?? (() => this.plugin.settings[key]);
         set = set ?? ((v) => (this.plugin.settings[key] = v));
-        format = format ?? ((v) => v / div);
-        parse = parse ?? ((v) => v * div);
+        readout = readout ?? ((v) => String(v / div));
         const setting = new Setting(container).setName(unit ? name + " (" + unit + ")" : name);
         if (desc)
             setting.setDesc(desc);
         const wrap = setting.controlEl.createDiv({ cls: "cc-range" });
         const label = wrap.createSpan({ cls: "cc-range-label" });
-        const attr = { type: "range", min: String(min), max: String(max), step: String(step), "data-ignore-swipe": "true" };
+        const attr = { type: "range", min: String(min * div), max: String(max * div), step: String(step * div), "data-ignore-swipe": "true" };
         const slider = wrap.createEl("input", { cls: "slider cc-single-slider", attr });
         const paint = () => label.setText(readout(Number(slider.value)));
         slider.value = String(format(get()));
@@ -776,7 +776,7 @@ class CompanionSettingTab extends PluginSettingTab {
         grid.addEventListener("pointermove", (e) => {
             if (e.pointerId !== pointerId)
                 return;
-            const under = activeDocument.elementFromPoint(e.clientX, e.clientY);
+            const under = grid.doc.elementFromPoint(e.clientX, e.clientY);
             const pill = under ? under.closest(".cc-pill") : null;
             if (pill && grid.contains(pill))
                 paint(pill);
@@ -929,6 +929,7 @@ class CompanionSettingTab extends PluginSettingTab {
     // Per-comment-set editor body: a name and the comment lines (delete via pill right-click).
     renderCommentSetBody(containerEl, set, editor) {
         const box = containerEl.createDiv({ cls: "cc-settings-box" });
+        const save = () => this.plugin.saveDataFile("streamData");
         this.addTextSetting(box, {
             name: "Label",
             placeholder: "(unnamed)",
@@ -938,7 +939,7 @@ class CompanionSettingTab extends PluginSettingTab {
                 editor.refreshPillLabel(set.id, v || "(unnamed)");
                 this.rebuildPillGrid("commentSet");
             },
-            save: () => this.plugin.saveDataFile("streamData"),
+            save,
         });
         new Setting(box)
             .setName("Comments")
@@ -946,7 +947,7 @@ class CompanionSettingTab extends PluginSettingTab {
         this.addBulkTextarea(box, {
             get: () => set.comments,
             set: (lines) => (set.comments = lines),
-            save: () => this.plugin.saveDataFile("streamData"),
+            save,
         });
         new Setting(box)
             .setName("Variables")
@@ -954,7 +955,7 @@ class CompanionSettingTab extends PluginSettingTab {
         this.addMapTextarea(box, {
             get: () => set.vars,
             set: (m) => (set.vars = m),
-            save: () => this.plugin.saveDataFile("streamData"),
+            save,
         });
     }
 }

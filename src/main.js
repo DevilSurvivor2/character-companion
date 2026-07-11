@@ -138,12 +138,9 @@ class CharacterCompanionPlugin extends Plugin {
         await this.saveData(this.settings);
         this.applyChange(rerender);
     }
-    // Reconcile open UI after a save. full=true -> re-render panels. Otherwise the panel's own idempotent sync() reconciles everything in place (timers, slot occupant, backdrop, effects — every setting applies live without tearing the sprite down); only the feed font sits outside it. Always reconciles stage.
+    // Reconcile open UI after a save. full=true -> re-render panels. Otherwise the panel's own idempotent sync() reconciles everything in place (timers, bottom-bar occupant, backdrop, effects, fonts, button lights — every setting applies live without tearing the sprite down). Always reconciles stage.
     applyChange(full = false) {
-        this.eachView(full ? (view) => view.render() : (view) => {
-            view.sync();
-            view.feed.applyFont();
-        });
+        this.eachView(full ? (view) => view.render() : (view) => view.sync());
         if (this.stage)
             this.stage.refresh();
     }

@@ -23,17 +23,18 @@ class CompanionStage {
     mount() {
         if (this.stageEl)
             return;
-        this.stageEl = activeDocument.body.createDiv({ cls: "cc-root-stage" });
-        // The window the stage is pinned to, captured with its DOM. tick() schedules the next frame and pause() cancels it, so both MUST address the same window — reading `activeWindow` per call would let a focus change strand a rAF that pause() can never cancel.
+        // Pinned to the MAIN window's body (never `activeDocument` — popouts are out of the plugin's scope), and every listener below addresses the same window/document. tick() schedules the next frame and pause() cancels it, so both MUST address the same window — a per-call `activeWindow` read would let a focus change strand a rAF that pause() can never cancel.
+        this.stageEl = document.body.createDiv({ cls: "cc-root-stage" });
         this.win = this.stageEl.win;
-        this.plugin.registerDomEvent(activeWindow, "resize", () => this.onResize());
-        this.plugin.registerDomEvent(activeWindow, "pointermove", (e) => this.cursor.move(e));
-        this.plugin.registerDomEvent(activeDocument.documentElement, "pointerleave", () => this.cursor.leave());
+        const doc = this.stageEl.doc;
+        this.plugin.registerDomEvent(this.win, "resize", () => this.onResize());
+        this.plugin.registerDomEvent(this.win, "pointermove", (e) => this.cursor.move(e));
+        this.plugin.registerDomEvent(doc.documentElement, "pointerleave", () => this.cursor.leave());
         this.refresh();
-        // Run only while Obsidian is the focused, visible app.
-        this.plugin.registerDomEvent(activeWindow, "blur", () => this.sync());
-        this.plugin.registerDomEvent(activeWindow, "focus", () => this.sync());
-        this.plugin.registerDomEvent(activeDocument, "visibilitychange", () => this.sync());
+        // Run only while the main window is the focused, visible one (appActive — a focused popout pauses the stage).
+        this.plugin.registerDomEvent(this.win, "blur", () => this.sync());
+        this.plugin.registerDomEvent(this.win, "focus", () => this.sync());
+        this.plugin.registerDomEvent(doc, "visibilitychange", () => this.sync());
         this.sync();
     }
     unmount() {
@@ -253,12 +254,12 @@ class CompanionStage {
     }
     // Top of the floor strip the walkers occupy. Shared by cursor-react and tickle.
     stageTop() {
-        return activeWindow.innerHeight - this.plugin.settings.rootSpriteMaxHeight;
+        return this.win.innerHeight - this.plugin.settings.rootSpriteMaxHeight;
     }
     // The horizontal band (px) a walker may rest within. Shared by settle, resize, placement.
     restBand() {
         const T = tuning();
-        const width = activeWindow.innerWidth;
+        const width = this.win.innerWidth;
         return { lo: T.restBandLo * width, hi: T.restBandHi * width };
     }
     // A shrunk window can strand a walker off-screen; pull any such back inside the band.

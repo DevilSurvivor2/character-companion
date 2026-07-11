@@ -58,12 +58,12 @@
     opacity: 1;
 }
 
-/* When a stream backdrop shows, give the icon glyph a halo for legibility. */
-.cc-root:has(.cc-anchor.cc-streaming) .cc-icon-btn:not(.cc-icon-active) {
+/* When a backdrop shows (stream bg or a program airing's cover), give the icon glyph a halo for legibility. */
+.cc-root:has(.cc-anchor.cc-streaming, .cc-anchor.cc-program) .cc-icon-btn:not(.cc-icon-active) {
     color: var(--text-normal);
     opacity: 1;
 }
-.cc-root:has(.cc-anchor.cc-streaming) .cc-icon-btn:not(.cc-icon-active:hover) .svg-icon {
+.cc-root:has(.cc-anchor.cc-streaming, .cc-anchor.cc-program) .cc-icon-btn:not(.cc-icon-active:hover) .svg-icon {
     filter:
         drop-shadow(0 0 0px var(--text-normal)) 
         drop-shadow(0 0 1px var(--background-primary));
@@ -93,12 +93,23 @@
     filter: blur(1px);
 }
 
-/* Program mode hijacks the same backdrop: the airing image shows crisp (no stream blur) and the sprite hides for its duration. Effects and overlay tickers keep running — the program owns only the backdrop and the sprite's visibility. */
-.cc-anchor.cc-program::before {
-    filter: none;
-}
-.cc-anchor.cc-program .cc-sprite-wrap {
+/* Program mode hijacks the scene: the airing's held image fades in crisp (no stream blur) on this cover layer ABOVE the sprite and the backdrop dressing — the sprite never moves, it's simply covered, and the cover blocks its pointer events for the duration. The fade is the universal hijack transition (cc-hijack's recipe, restated because a pseudo-element can't take the classes); --cc-program-bg keeps its last image (paintBackground never clears it) so the fade-out still shows the airing. Foreground effects (rain/snow/frame), the aesthetics overlay, and the icon column sit higher and keep playing over it. */
+.cc-anchor::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background-image: var(--cc-program-bg, none);
+    background-size: cover;
+    background-position: center;
+    opacity: 0;
     visibility: hidden;
+    transition: opacity var(--cc-hijack-fade) ease, visibility 0s var(--cc-hijack-fade);
+}
+.cc-anchor.cc-program::after {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity var(--cc-hijack-fade) ease, visibility 0s;
 }
 
 /* Empty-state message, shared by the panel body and the settings grids. */

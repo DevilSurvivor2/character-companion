@@ -110,7 +110,7 @@ class ListEditor {
         }
         // Find the pill under the pointer (hiding the dragged pill from the hit test for the lookup), then move the dragged pill to its near/far side — the grid reflows.
         this.reorderPill.classList.add("cc-no-hit");
-        const under = activeDocument.elementFromPoint(e.clientX, e.clientY);
+        const under = this.gridEl.doc.elementFromPoint(e.clientX, e.clientY);
         this.reorderPill.classList.remove("cc-no-hit");
         const target = under ? under.closest(".cc-pill") : null;
         if (!target || target === this.reorderPill || !this.gridEl.contains(target))
