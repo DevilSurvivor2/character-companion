@@ -1,6 +1,6 @@
 "use strict";
-const { ANIMS_BY_ROLE, ANIM_BY_NAME, HOLD_SHAKES } = require("./registries.js");
-const { Bag, bubbleHoldMs, capturePointer, enabledList, playAnimation, randRange, releasePointer, splitQuote, spriteTopInsetFraction, stopAnimation, tuning } = require("./toolkit.js");
+const { ANIMS_BY_ROLE, ANIM_BY_NAME, ANIM_POOLS, CLEARABLE, HOLD_SHAKES } = require("./registries.js");
+const { Bag, bubbleHoldMs, capturePointer, randRange, releasePointer, splitQuote, spriteTopInsetFraction, tuning } = require("./toolkit.js");
 // A walker is in exactly one MODE; every interaction is a transition and the loop reads this field. WALK travelling · REST in the band · HELD carried · DROP landing · ANIM playing. Only WALK and DROP have per-frame bodies; HELD/REST/ANIM are event- or timer-driven.
 const MODE = { WALK: "walk", REST: "rest", HELD: "held", DROP: "drop", ANIM: "anim" };
 // Independent rest fidgets, each rolled on its own chance (a tuning key) and fired once at a random point in the FIRST part of the rest window (--cc-rest-idle-fraction). They layer. Add one: append a row.
@@ -13,6 +13,21 @@ const HELD_ACTIVITIES = [
     { name: "shake", chance: 1, run: (w, done) => w.holdShake(done) },
     { name: "escape", chance: "escapeChance", run: (w, done) => w.holdEscape(done) },
 ];
+// Total run time (ms) of the CSS animation on an element: longest duration × iteration count, read from the stylesheet. Computed duration is in seconds; a list takes the max.
+function animationDurationMs(el) {
+    const cs = activeWindow.getComputedStyle(el);
+    const longest = (cs.animationDuration || "0s")
+        .split(",")
+        .reduce((max, part) => Math.max(max, parseFloat(part) || 0), 0) * 1000;
+    const iterRaw = (cs.animationIterationCount || "1").split(",")[0].trim();
+    const iter = iterRaw === "infinite" ? 1 : parseFloat(iterRaw) || 1;
+    return longest * iter;
+}
+// A role's enabled animations, optionally limited to the walker-safe subset (root:false keeps a move off the floor).
+function enabledList(settings, role, rootOnly) {
+    const pool = ANIM_POOLS[role];
+    return pool.all.filter((a) => (!rootOnly || ANIM_BY_NAME[a].root !== false) && settings[pool.flag][a]);
+}
 // One sprite's whole life: DOM, state, and every self-contained behaviour (motion, animation, rest fidgets, grab/carry, the activity runner, timers). Cross-walker coordination lives on CompanionStage via `this.stage` (null for a stage-less sprite).
 class Walker {
     constructor(stage, plugin, character, els, urls, speed) {
@@ -76,6 +91,8 @@ class Walker {
         this.easeTimer = null;
         // The single live timer of a speak sequence. A quote types out sentence by sentence, but strictly one step at a time (each typewriter tick / sentence hold schedules the next), so only ever one is pending.
         this.bubbleTimer = null;
+        // The pending end timer of the sprite's image animation (see playAnimation).
+        this.animTimer = null;
         // Sleep clock: time of last interaction.
         this.lastInteraction = Date.now();
         this.imgEl.draggable = false;
@@ -140,7 +157,7 @@ class Walker {
     easeImagePose() {
         const img = this.imgEl;
         const current = activeWindow.getComputedStyle(img).transform;
-        stopAnimation(img);
+        this.stopAnimation();
         if (!current || current === "none")
             return false;
         img.setCssProps({ transform: current });
@@ -370,6 +387,30 @@ class Walker {
             this.setSprite(this.spriteBag.next(this.spriteUrls));
         }, tuning().flipSwap));
     }
+    // Stop the sprite's animation: cancel the pending end timer and strip the behaviour class (which drops the sprite back to its transform rest — see styles.css).
+    stopAnimation() {
+        if (this.animTimer != null) {
+            this.win.clearTimeout(this.animTimer);
+            this.animTimer = null;
+        }
+        this.imgEl.classList.remove(...CLEARABLE);
+    }
+    // Play an animation spec (an ANIMATIONS row or { name }) on the sprite's image: stop any in-flight one first, apply `cc-anim-<spec.name>`. onEnd fires off a timer sized from the CSS duration (animationend is unreliable for custom-property animations).
+    playAnimation(spec, onEnd) {
+        this.stopAnimation();
+        // Reflow so re-adding the same class restarts its animation.
+        void this.imgEl.offsetWidth;
+        // Maybe reverse this round's horizontal motion via --cc-dir (negates movement only, never mirrors artwork).
+        if (spec.directional)
+            this.imgEl.setCssProps({ "--cc-dir": Math.random() < 0.5 ? "-1" : "1" });
+        this.imgEl.classList.add("cc-anim-" + spec.name);
+        this.animTimer = this.win.setTimeout(() => {
+            this.animTimer = null;
+            this.stopAnimation();
+            if (onEnd)
+                onEnd();
+        }, animationDurationMs(this.imgEl));
+    }
     // Play a random animation of a function-role (flip/bob/tickle/sleep), drawn without repeats from a per-role bag. The single path for every role-named behaviour.
     playRole(role, interruptible = false) {
         const name = (this.roleBags[role] ??= new Bag()).next(ANIMS_BY_ROLE[role]);
@@ -381,7 +422,7 @@ class Walker {
         this.mode = MODE.ANIM;
         this.interruptible = interruptible;
         this.easeToward(tuning().walkRestY, () => {
-            playAnimation(this.imgEl, spec, () => this.beginRest());
+            this.playAnimation(spec, () => this.beginRest());
         });
     }
     // ---- activity runner (shared, mode-scoped) ---- Run an ordered activity list: each row rolled on its chance, passers run in order (next starts when the previous calls done()). loop=true repeats.
@@ -421,7 +462,7 @@ class Walker {
     // Full teardown (pause off screen / destroy): every timer, any in-flight image animation, and the bubble. Widest of three scopes (clearActivities = the sequence; endDrag = the carry). The bubble's visible CLASS is dropped too, else a stranded bubble wedges the rest cycle (playIdleBeat won't speak over a visible one).
     clearTimers() {
         this.clearActivities();
-        stopAnimation(this.imgEl);
+        this.stopAnimation();
         this.endEase();
         this.clearBubbleTimer();
         if (this.bubbleEl)
@@ -447,7 +488,7 @@ class Walker {
             if (this.mode !== MODE.HELD)
                 return;
             const rung = Math.min(Math.floor(count / bouts), HOLD_SHAKES.length - 1);
-            playAnimation(this.imgEl, ANIM_BY_NAME[HOLD_SHAKES[rung]]);
+            this.playAnimation(ANIM_BY_NAME[HOLD_SHAKES[rung]]);
             count++;
             const interval = rung === 0 ? T.holdWiggleInterval : T.holdStruggleInterval;
             this.actTimers.push(this.win.setTimeout(count >= total ? done : bout, interval));
@@ -466,7 +507,7 @@ class Walker {
                 return;
             // Wriggle free only if the pointer is still (same test release uses).
             if (this.isPointerStill())
-                playAnimation(this.imgEl, ANIM_BY_NAME[HOLD_SHAKES[0]], () => {
+                this.playAnimation(ANIM_BY_NAME[HOLD_SHAKES[0]], () => {
                     if (this.mode === MODE.HELD)
                         this.release();
                 });
@@ -636,7 +677,7 @@ class Walker {
     // Tear down a pick-up: clear the held sequence + the dragging class. The single place the carry ends — release and react both route here.
     endDrag() {
         this.clearActivities();
-        stopAnimation(this.imgEl);
+        this.stopAnimation();
         this.imgEl.classList.remove("cc-dragging");
     }
     // The universal set-down: end the carry, resolve the release velocity, hand the landing bounce (and any flick) to the loop. isPointerStill tells a set-down (zero flickVel) from a flick (flickVel is stale when the pointer is held still).

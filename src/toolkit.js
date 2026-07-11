@@ -1,9 +1,8 @@
 "use strict";
-// Shared free functions: random draws, the timer primitives, CSS tuning access, the
-// sprite/animation primitives, and text utilities. Surface-agnostic — nothing in here may
-// know about a specific class; state rides on arguments (or element expandos, never module state).
+// Shared free functions: random draws, the timer primitives, CSS tuning access, sprite-path
+// resolution, and text utilities. Surface-agnostic — nothing in here may know about a
+// specific class; state rides on arguments, never on module state.
 const { TFile, TFolder } = require("obsidian");
-const { ANIM_BY_NAME, ANIM_POOLS, CLEARABLE } = require("./registries.js");
 // Comma-separated inline text (e.g. "Trickster, Rascal") → a trimmed, non-empty string list.
 const commaList = (v) => (v || "").split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 // Fisher-Yates shuffle in place; returns the same array.
@@ -144,18 +143,6 @@ function tuning() {
     });
     return _tuning;
 }
-// Total run time (ms) of the CSS animation on an element: longest duration × iteration count, read from the stylesheet. Computed duration is in seconds; a list takes the max.
-function animationDurationMs(el) {
-    if (!el)
-        return 0;
-    const cs = activeWindow.getComputedStyle(el);
-    const longest = (cs.animationDuration || "0s")
-        .split(",")
-        .reduce((max, part) => Math.max(max, parseFloat(part) || 0), 0) * 1000;
-    const iterRaw = (cs.animationIterationCount || "1").split(",")[0].trim();
-    const iter = iterRaw === "infinite" ? 1 : parseFloat(iterRaw) || 1;
-    return longest * iter;
-}
 // Build an effect from --cc-fx-<key>-* CSS descriptors (-count N, -rand n lo hi per-particle CSS vars, -steps lo hi, -wander dLo dHi xr yr sLo sHi, -layers N). Returns teardown function.
 function buildEffect(anchor, key) {
     const cs = activeWindow.getComputedStyle(anchor);
@@ -208,42 +195,6 @@ function buildEffect(anchor, key) {
         for (const n of nodes)
             n.remove();
     };
-}
-// Stop a sprite's animation: cancel the pending end timer and strip the behaviour class (which drops the sprite back to its transform rest — see styles.css).
-function stopAnimation(imgEl) {
-    if (!imgEl)
-        return;
-    if (imgEl.__ccAnimTimer != null) {
-        imgEl.win.clearTimeout(imgEl.__ccAnimTimer);
-        imgEl.__ccAnimTimer = null;
-    }
-    imgEl.classList.remove(...CLEARABLE);
-}
-// Play an animation spec (an ANIMATIONS row or { name }) on a sprite's image: stop any in-flight one first, apply `cc-anim-<spec.name>`. onEnd fires off a timer sized from the CSS duration (animationend is unreliable for custom-property animations).
-function playAnimation(imgEl, spec, onEnd) {
-    if (!imgEl) {
-        if (onEnd)
-            onEnd();
-        return;
-    }
-    stopAnimation(imgEl);
-    // Reflow so re-adding the same class restarts its animation.
-    void imgEl.offsetWidth;
-    // Maybe reverse this round's horizontal motion via --cc-dir (negates movement only, never mirrors artwork).
-    if (spec.directional)
-        imgEl.setCssProps({ "--cc-dir": Math.random() < 0.5 ? "-1" : "1" });
-    imgEl.classList.add("cc-anim-" + spec.name);
-    imgEl.__ccAnimTimer = imgEl.win.setTimeout(() => {
-        imgEl.__ccAnimTimer = null;
-        stopAnimation(imgEl);
-        if (onEnd)
-            onEnd();
-    }, animationDurationMs(imgEl));
-}
-// A role's enabled animations, optionally limited to the walker-safe subset (root:false keeps a move off the floor).
-function enabledList(settings, role, rootOnly) {
-    const pool = ANIM_POOLS[role];
-    return pool.all.filter((a) => (!rootOnly || ANIM_BY_NAME[a].root !== false) && settings[pool.flag][a]);
 }
 // Run fn as soon as styles.css has landed (tuning() resolves a real number), retrying on rAF until then. Every surface that reads --cc-* numbers at build time (panel render, stage mount) waits behind this, or a hot reload builds it unstyled and it animates into place as the rules arrive.
 function whenStyled(fn) {
@@ -405,7 +356,7 @@ function choiceRules(map) {
 }
 module.exports = {
     Bag, appActive, bubbleHoldMs, buildEffect, capturePointer, choiceRules, commaList,
-    enabledList, formatHMS, pick, playAnimation, randInt, randRange, randStr, randomInterval,
-    reconcileTimer, releasePointer, resolvePathList, shuffle, splitQuote,
-    spriteTopInsetFraction, stopAnimation, tuning, whenStyled,
+    formatHMS, pick, randInt, randRange, randStr, randomInterval, reconcileTimer,
+    releasePointer, resolvePathList, shuffle, splitQuote, spriteTopInsetFraction,
+    tuning, whenStyled,
 };
