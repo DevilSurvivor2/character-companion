@@ -454,7 +454,7 @@ class CompanionView extends ItemView {
         // The aesthetics overlay sits on the anchor, above the sprite (its sync gates every piece).
         this.aesthetics.build(anchor);
     }
-    // The vertical icon-button column down the right edge (SIDEBAR_BUTTONS): one action each, lit when its `active` predicate holds, greyed when `disabled`.
+    // The vertical icon-button column down the right edge (SIDEBAR_BUTTONS): one action each, lit when its `active` predicate holds.
     renderIconColumn(root) {
         const col = root.createDiv({ cls: "cc-icon-col" });
         // Track the live toggle buttons so toggleMode can relight them without re-rendering.

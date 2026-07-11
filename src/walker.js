@@ -315,7 +315,7 @@ class Walker {
     setEasing(on) {
         this.wrapEl.classList.toggle("cc-eased", on);
     }
-    // Flick friction: bleed |flickVel| toward zero at flickDecel over dt. The one place momentum decays — the in-flight slide and the release both use it.
+    // Flick friction: bleed |flickVel| toward zero at flickDecel over dt while the drop slide is in flight.
     brakeFlick(dt) {
         this.flickVel -= Math.sign(this.flickVel) * Math.min(Math.abs(this.flickVel), tuning().flickDecel * dt);
     }
