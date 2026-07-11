@@ -12,9 +12,10 @@ CLAUDE.md
 # Corruption backups written by readJsonFile
 *.bak
 
-# Build artifact — shipped via GitHub releases, not the repo.
-# Leading slash anchors this to the repo root so it does NOT also match src/main.js.
+# Build artifacts — shipped via GitHub releases, not the repo.
+# Leading slashes anchor these to the repo root so they do NOT also match src/.
 /main.js
+/styles.css
 
 # Node
 node_modules/

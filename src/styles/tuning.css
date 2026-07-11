@@ -1,0 +1,115 @@
+/* Behavioural constants: timings in ms, distances in px, fractions/chances/multipliers unitless. */
+:root {
+    --cc-idle-min-delay: 10000ms;
+    --cc-idle-max-delay: 22000ms;
+    --cc-double-click: 350ms;
+    --cc-sleep-multiplier: 2.5;
+    --cc-drag-threshold: 6px;
+    --cc-walk-max-distance-frac: 0.5;
+    --cc-rest-band-lo: 0.03;
+    --cc-rest-band-hi: 0.97;
+    --cc-rest-overlap-frac: 1;
+    --cc-layer-overlap-frac: 1;
+    --cc-walk-step-length: 36px;
+    --cc-walk-edge-margin: 8px;
+    --cc-drop-duration: 650ms;
+    --cc-drop-decay: 3;
+    --cc-drop-bounce-count: 3.5;
+    --cc-hold-start: 1200ms;
+    --cc-hold-wiggle-bouts: 3;
+    --cc-hold-wiggle-interval: 1400ms;
+    --cc-hold-struggle-interval: 900ms;
+    --cc-escape-chance: 0.5;          /* held: chance a shake climb is followed by an escape attempt */
+    --cc-escape-still-window: 1500ms; /* hold still this long and an escape-enabled sprite breaks free */
+    --cc-flip-chance: 0.1;            /* rest: chance a rest turns the sprite and swaps its image */
+    --cc-flip-swap: 300ms;            /* when the image swap happens (hidden edge-on) */
+    --cc-flip-cooldown: 12000ms;      /* min gap between two flips */
+    --cc-walk-max-frame: 100ms;
+    --cc-react-radius: 160px;             /* cursor react: how near the cursor must be to steer a sprite (also a flee's run distance) */
+    --cc-react-speed-mult: 2.2;           /* pace boost on a steered walk, flee and approach alike */
+    --cc-curious-gap: 90px;               /* how near an approach parks to watch */
+    --cc-curious-watch-min: 3000ms;       /* watch window before a curiosity-chatter roll */
+    --cc-curious-watch-max: 4000ms;
+    --cc-curious-chatter-chance: 0.25;    /* chance, per watch window, to speak at the cursor */
+    --cc-rest-idle-fraction: 0.5;
+    --cc-flick-sample-floor: 8ms;     /* min segment time for pointer-velocity sample */
+    --cc-flick-min-velocity: 320;
+    --cc-flick-decel: 5600;
+    --cc-idle-chance: 0.1;
+    --cc-tickle-window: 600ms;
+    --cc-tickle-min-step: 4px;
+    --cc-tickle-reversals: 4;
+    --cc-ease: 180ms;
+ 
+    /* Vertical model: at rest a sprite sits --cc-rest-down (3% of its height) below the floor, hiding the knee-crop. Upward motion is capped at this value (translateY: -3%); more travel dips first (positive translateY) and rises back. */
+    --cc-rest-down: 3%;
+    --cc-walk-rest-y: 3;   /* walk arc: rest, 3% below floor */
+    --cc-walk-lift-y: 0;   /* walk arc: peak, level with the floor */
+
+    /* Speech bubble anchoring: float the bubble above the sprite's top-most coloured pixel rather than the empty image-box top. --cc-bubble-gap is the float distance as a unitless FRACTION of the surface's sprite max-height, so root and sidebar (different heights) get a proportional gap instead of one fixed px looking huge on the short one. --cc-bubble-inset is the measured transparent-top height in rendered px (set per-walker by JS; 0 until measured). A row counts as coloured once any pixel's alpha exceeds --cc-bubble-inset-alpha (0–1). */
+    --cc-bubble-gap: 0.1;
+    --cc-bubble-inset-alpha: 0.05;
+    --cc-bubble-max-width: 220;   /* px cap on bubble width (both surfaces); also the "full line" reference JS scales the hold time against */
+
+    /* Quote typewriter (quoteTypewriter "slow"/"fast"): the bubble types its line out one char at a time, then holds for the quote-duration setting before the next sentence. --cc-quote-type-speed-slow / -fast are the two selectable per-char gaps (the setting picks one; "off" skips typing entirely); after punctuation whichever is chosen lengthens — end marks (. ! ? and a sentence-final …) pause --cc-quote-pause-end, mid marks (, — and a mid-sentence …) pause half that. A line is split into sentences first; runs shorter than --cc-quote-min-words words merge so no bubble is a lone one-word burst. */
+    --cc-quote-type-speed-slow: 45ms;
+    --cc-quote-type-speed-fast: 16ms;
+    --cc-quote-pause-mid: 180ms;
+    --cc-quote-pause-end: 360ms;
+    --cc-quote-min-words: 3;
+
+    /* Bubble hold time scales with content length rather than being flat: the quote-duration SETTING is spent over exactly one full line, so a line filling --cc-bubble-max-width holds for it, shorter lines clear sooner, and a wrapped multi-line line lingers proportionally longer. --cc-quote-char-em (avg glyph width as a fraction of font-size) turns the pixel width into a chars-per-full-line count; --cc-quote-hold-min is the floor so a one-word burst still registers. */
+    --cc-quote-char-em: 0.5;
+    --cc-quote-hold-min: 1400ms;
+
+    /* Stream aesthetics: viewer-count drift + heart/emoji particle ranges. Heart/emoji durations are seconds; everything else carries its unit. */
+    --cc-aes-viewer-start-min: 1000;    /* opening viewer count, rolled in [min, max] */
+    --cc-aes-viewer-start-max: 10000;
+    --cc-aes-viewer-interval: 2500ms;   /* how often the count drifts */
+    --cc-aes-viewer-delta: 8;           /* max +/- wobble per tick */
+    --cc-aes-viewer-spike-chance: 0.12; /* chance a tick adds a bulk spike */
+    --cc-aes-viewer-spike-min: 30;
+    --cc-aes-viewer-spike-max: 200;
+    --cc-aes-viewer-floor: 1;           /* never drifts below this */
+    --cc-aes-heart-size-min: 16px;
+    --cc-aes-heart-size-max: 30px;
+    --cc-aes-heart-opacity-min: 0.5;
+    --cc-aes-heart-opacity-max: 0.95;
+    --cc-aes-heart-pink-chance: 0.3;    /* the rest are grey */
+    --cc-aes-heart-rise-min: 120px;     /* how far a heart climbs */
+    --cc-aes-heart-rise-max: 260px;
+    --cc-aes-heart-duration-min: 1.6;   /* seconds */
+    --cc-aes-heart-duration-max: 3;
+    --cc-aes-heart-sway: 26px;          /* max horizontal snake amplitude */
+    --cc-aes-heart-steps-min: 3;        /* snake waypoints */
+    --cc-aes-heart-steps-max: 6;
+    --cc-aes-emoji-size-min: 20px;
+    --cc-aes-emoji-size-max: 40px;
+    --cc-aes-emoji-duration-min: 2.2;   /* seconds to fall */
+    --cc-aes-emoji-duration-max: 4.5;
+    --cc-aes-emoji-drift: 40px;         /* max horizontal drift while falling */
+
+    /* Oracle mode (reactive feed). Timings in ms; chances 0–1. */
+    --cc-oracle-debounce: 1200ms;       /* wait after typing stops before classifying */
+    --cc-oracle-react-window: 45000ms;  /* how long a typed match stays "fresh" for a VIP beat */
+    --cc-oracle-match-factor: 1.6;      /* classifier confidence must beat 1.6 × the 1/N baseline */
+    --cc-oracle-aside2-chance: 0.4;     /* chance a VIP line gains a 2nd sentence */
+    --cc-oracle-aside3-chance: 0.12;    /* chance it gains a 3rd (nested under the 2nd) */
+
+    /* Blog mode (microblog feed). Chances 0–1; digit count is a plain integer range. Both handle rolls are independent. */
+    --cc-blog-handle-lower-chance: 0.5;  /* chance a generated @handle is all-lowercase */
+    --cc-blog-handle-digit-chance: 0.3;  /* chance it gains a trailing digit run */
+    --cc-blog-handle-digit-min: 1;       /* fewest trailing digits when the digit roll hits */
+    --cc-blog-handle-digit-max: 3;       /* most trailing digits */
+    --cc-blog-handle-max-len: 7;         /* max characters per handle word */
+
+    /* News mode (headline feed OR bottom-slot chyron — one face at a time). The chyron owns no cadence: every pass is cued by a news feed beat (the newsMinMs/newsMaxMs setting), so no interval var lives here. */
+    --cc-news-chyron-max: 3;        /* MAX headlines joined per chyron pass; each pass picks a random count 1..max */
+    --cc-news-chyron-speed: 55;     /* scroll speed, px per second (a longer strip takes proportionally longer) */
+    --cc-news-chyron-fade: 200ms;   /* bar fade-in/out; also the scroll's start delay, so the bar is fully in before the strip moves */
+
+    /* Program mode (scheduled broadcast). The airing lasts as long as its content takes to play — each line holds for the shared quote staying time (--cc-quote-* / quoteDurationMs) — so it needs no duration knob of its own. */
+
+    /* Shared font for stream text (feed bubbles, tickers, comment box). */
+    --cc-stream-font: "Arial", "Inter", "Segoe UI";
+}

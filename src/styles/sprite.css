@@ -1,0 +1,119 @@
+
+/* Sprites use transform for placement (composited, no layout thrash). Bottom edge at floor; translateY pushes to the rest line (--cc-rest-down). */
+
+/* Sidebar sprite: centred and fixed — never walks or mirrors. */
+.cc-sprite-wrap {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    transform: translateX(-50%) translateY(var(--cc-rest-down));
+    transform-origin: center bottom;
+}
+ 
+/* Dim while dozing. On the wrap so per-beat animations can't clear it. */
+.cc-sprite-wrap.cc-asleep {
+    filter: brightness(0.72) saturate(0.85);
+    opacity: 0.92;
+    transition: filter 600ms ease, opacity 600ms ease;
+}
+ 
+/* A single walker, centred on --cc-x (px) and lifted by the walk arc (--cc-y). --cc-z is the stacking rank (1..N), dealt per walker at runtime for random front/back order. */
+.cc-walker {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    z-index: var(--cc-z, 1);
+    transform: translateX(calc(var(--cc-x, 0px) - 50%)) translateY(var(--cc-y, var(--cc-rest-down)));
+    transform-origin: center bottom;
+    will-change: transform;
+}
+ 
+/* Eased transform transition — used to settle poses back to rest. */
+.cc-eased {
+    transition: transform var(--cc-ease) ease-out;
+}
+ 
+.cc-sprite {
+    display: block;
+    /* Horizontal-motion direction sign (1 or -1), set per round by JS. */
+    --cc-dir: 1;
+    /* Cap to the configured height. */
+    max-height: calc(var(--cc-sprite-max-height, 400) * 1px);
+    max-width: unset !important;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-drag: none;
+    transform-origin: center bottom;
+}
+ 
+.cc-sprite.cc-dragging {
+    cursor: grabbing;
+}
+
+.cc-empty {
+    margin: auto;
+    padding: 16px;
+    color: var(--text-muted);
+    text-align: center;
+    font-size: var(--font-ui-small);
+}
+ 
+/* Root stage: full-window strip along the bottom edge where characters walk. overflow:visible lets the bubble rise above the strip. */
+.cc-root-stage {
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    height: calc(var(--cc-sprite-max-height, 400) * 1px);
+    overflow: visible;
+    pointer-events: none;
+    z-index: calc(var(--layer-status-bar, 15) + 2);
+}
+ 
+/* The overlay ignores the pointer, but its sprites are grabbable. */
+.cc-walker .cc-sprite {
+    pointer-events: auto;
+}
+ 
+/* Speech bubble — shared look for both sidebar and stage surfaces. */
+.cc-bubble {
+    position: fixed;
+    margin: 0;
+    transform: translateX(-50%) translateY(-4px);
+    width: max-content;
+    max-width: calc(var(--cc-bubble-max-width) * 1px);
+    padding: 8px 12px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 12px;
+    color: var(--text-normal);
+    font-size: var(--font-ui-small);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease, transform 150ms ease;
+    z-index: calc(var(--layer-status-bar, 15) + 1);
+}
+
+/* In the root stage the bubble floats above the sprite's top-most coloured pixel: box top (sprite-max-height) minus the measured transparent inset, plus the gap (--cc-bubble-gap as a fraction of this surface's max-height). */
+.cc-walker .cc-bubble {
+    position: absolute;
+    left: 50%;
+    bottom: calc((var(--cc-sprite-max-height, 300) * (1 + var(--cc-bubble-gap))) * 1px - var(--cc-bubble-inset, 0px));
+    z-index: 3;
+}
+
+.cc-bubble::after {
+    content: "";
+    position: absolute;
+    bottom: -7px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-top: 7px solid var(--background-secondary);
+}
+ 
+.cc-bubble-visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}

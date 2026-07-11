@@ -1,0 +1,209 @@
+
+/* Stream aesthetics: in-panel livestream overlay, shown while stream mode is on. Particle motion (hearts/emoji) is WAAPI-driven; only placement lives here. */
+.cc-aes {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    display: none;
+    pointer-events: none;
+}
+.cc-aes.cc-aes-show {
+    display: block;
+}
+.cc-hidden {
+    display: none !important;
+}
+
+/* Top-left tickers, kept clear of the right-edge icon column. */
+.cc-aes-top {
+    position: absolute;
+    inset-inline: 16px;
+    inset-block-start: 25px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--cc-stream-font);
+}
+.cc-aes-stats {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+}
+/* The four corner tickers (uptime / viewer / profile / status): icon + text pill. */
+.cc-aes-ticker {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 100%;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.45);
+    color: rgb(255, 255, 255, 0.8);
+    font-variant-numeric: tabular-nums;
+    text-transform: capitalize;
+}
+.cc-aes-ticker-icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+}
+.cc-aes-ticker-icon .svg-icon {
+    width: 14px;
+    height: 14px;
+}
+.cc-aes-ticker-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Bottom-bar slot: at most one occupant at a time (see SLOT_OCCUPANTS in main.js) — stream's react bar or the news chyron. The slot owns the placement; each occupant fills it. */
+.cc-aes-slot {
+    position: absolute;
+    inset-inline: 16px;
+    inset-block-end: 25px;
+    display: flex;
+    align-items: center;
+}
+/* React bar occupant: fake comment box + gift/like buttons. */
+.cc-aes-react {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    filter:
+        drop-shadow(0 0 0px var(--text-normal))
+        drop-shadow(0 0 1px var(--background-primary))
+        drop-shadow(0 0 7px var(--background-primary));
+}
+/* Fake comment box: transparent bordered pill. */
+.cc-aes-comment {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    border: 2px solid var(--text-normal);
+    border-radius: 16px;
+    background: transparent;
+    pointer-events: auto;
+    font-family: var(--cc-stream-font);
+}
+/* Input carries no box of its own — only the placeholder/typed text shows. */
+.cc-aes-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    border: none !important;
+    background: none !important;
+    box-shadow: none !important;
+    filter: 
+        drop-shadow(0 0 0px var(--text-normal)) 
+        drop-shadow(0 0 1px var(--background-primary));
+}
+.cc-aes-input::placeholder {
+    color: var(--text-normal) !important;
+}
+/* Gift / like: borderless, background-less — just the big icon. */
+.cc-aes-btn {
+    flex: 0 0 auto;
+    padding: 0;
+    border: none !important;
+    background: none !important;
+    box-shadow: none !important;
+    cursor: pointer;
+    pointer-events: auto;
+}
+.cc-aes-btn:hover {
+    opacity: 0.8;
+}
+.cc-aes-like {
+    color: #ff5a7a;
+}
+.cc-aes-btn .svg-icon {
+    width: 24px;
+    height: 24px;
+}
+
+/* Chyron occupant: one clipped line of headlines; WAAPI scrolls the track right-to-left, only the box lives here. Fully invisible between passes: each news beat fades the bar in (--cc-news-chyron-fade, which also delays the scroll so the bar is fully in before the strip moves), scrolls once, and fades it back out to nothing. */
+.cc-aes-chyron {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    padding: 3px 0;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.45);
+    color: rgb(255, 255, 255, 0.85);
+    font-family: var(--cc-stream-font);
+    font-size: var(--font-ui-smaller);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--cc-news-chyron-fade) ease;
+    text-transform: uppercase;
+}
+.cc-aes-chyron-visible {
+    opacity: 1;
+}
+.cc-aes-chyron-track {
+    display: inline-block;
+    will-change: transform;
+}
+
+/* Program occupant: the airing's content, one line at a time as a centred bottom bubble. Fades in per line (opacity only, like the feed bubbles). */
+.cc-aes-program {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 6px 14px;
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.55);
+    color: rgb(255, 255, 255, 0.9);
+    font-family: var(--cc-stream-font);
+    font-size: var(--font-ui-small);
+    text-align: center;
+    word-break: break-word;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 200ms ease;
+}
+.cc-aes-program-visible {
+    opacity: 1;
+}
+
+/* Particle layer for WAAPI-driven hearts and emoji. Click-through; clips to panel. */
+.cc-aes-fx {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+.cc-aes-heart {
+    position: absolute;
+    right: 18px;
+    bottom: 52px;
+    line-height: 0;
+    color: #fff;          /* grey by default; pink variant below */
+    will-change: transform, opacity;
+}
+.cc-aes-heart-pink {
+    color: #ff5a7a;
+}
+/* Filled heart shape, coloured by `color`. */
+.cc-aes-heart .svg-icon {
+    width: var(--cc-aes-heart-px, 24px);
+    height: var(--cc-aes-heart-px, 24px);
+    fill: currentColor;
+    stroke: currentColor;
+}
+.cc-aes-emoji {
+    position: absolute;
+    top: 0;
+    left: var(--cc-gift-x);
+    line-height: 1;
+    font-size: var(--cc-gift-size);
+    font-family: var(--cc-gift-font);
+    will-change: transform, opacity;
+}

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "node esbuild.config.mjs production",
-    "lint": "eslint src/main.js"
+    "lint": "eslint src/"
   },
   "author": "DevilSurvivor2",
   "license": "GPL-3.0",

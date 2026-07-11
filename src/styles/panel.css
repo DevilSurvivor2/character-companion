@@ -1,0 +1,102 @@
+ 
+/* Remove Obsidian's default view padding so the sprite reaches the edges. */
+.workspace-leaf-content .view-content.cc-root {
+    padding: 0;
+}
+ 
+/* Positioning context for the speech bubble; sprite max-height also lives here. */
+.cc-root {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+ 
+/* Sidebar icon column: round action buttons pinned top-right of the panel. */
+.cc-icon-col {
+    position: absolute;
+    top: 15%;
+    right: 8px;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.cc-icon-btn {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    color: var(--text-muted);
+    box-shadow: none;
+    cursor: pointer;
+    opacity: 0.85;
+}
+
+.cc-icon-btn:hover {
+    opacity: 1;
+    color: var(--text-normal);
+}
+
+.cc-icon-btn .svg-icon {
+    width: 16px;
+    height: 16px;
+}
+
+/* Lit toggle button (stream or Oracle mode active). */
+.cc-icon-active,
+.cc-icon-active:hover {
+    background: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    opacity: 1;
+}
+
+/* When a stream backdrop shows, give the icon glyph a halo for legibility. */
+.cc-root:has(.cc-anchor.cc-streaming) .cc-icon-btn:not(.cc-icon-active) {
+    color: var(--text-normal);
+    opacity: 1;
+}
+.cc-root:has(.cc-anchor.cc-streaming) .cc-icon-btn:not(.cc-icon-active:hover) .svg-icon {
+    filter:
+        drop-shadow(0 0 0px var(--text-normal)) 
+        drop-shadow(0 0 1px var(--background-primary));
+}
+
+
+/* Fills the panel and clips the sprite so walks can exit and re-enter off-screen. */
+.cc-anchor {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 200px;
+    overflow: hidden;
+    /* Own stacking context so every negative-z child stays contained. */
+    isolation: isolate;
+}
+
+/* Stream mode backdrop behind the sprite. */
+.cc-anchor.cc-streaming::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    display: block;
+    background-image: var(--cc-bg, none);
+    background-size: cover;
+    background-position: center;
+    filter: blur(1px);
+}
+
+/* Program mode hijacks the same backdrop: the airing image shows crisp (no stream blur) and the sprite hides for its duration. Effects and overlay tickers keep running — the program owns only the backdrop and the sprite's visibility. */
+.cc-anchor.cc-program::before {
+    filter: none;
+}
+.cc-anchor.cc-program .cc-sprite-wrap {
+    visibility: hidden;
+}

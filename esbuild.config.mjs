@@ -19,6 +19,24 @@ ${ritaGlobal}
 };
 `;
 
+// styles.css is likewise a build artifact: a plain byte-for-byte concatenation of the
+// src/styles/ parts in this order (no CSS parser touches it, so the tuning comments and
+// custom-property values ship exactly as authored). Edit the parts, never root styles.css.
+const STYLE_PARTS = [
+  "tuning.css",     // the :root behavioural-constants block tuning() reads
+  "panel.css",      // sidebar panel shell: cc-root, icon column, anchor + backdrop
+  "effects.css",    // stream special effects (cc-fx-*)
+  "sprite.css",     // sprite wrap, root-stage walker, speech bubble, vertical model
+  "settings.css",   // pills, tab bar, range sliders, textareas
+  "feed.css",       // comment-feed overlay + per-mode bubble styles
+  "animations.css", // one block per animation: its class line + its keyframes
+  "aesthetics.css", // stream overlay tickers, bottom-bar slot, particles
+];
+function buildStyles() {
+  const css = STYLE_PARTS.map((f) => fs.readFileSync("src/styles/" + f, "utf8")).join("");
+  fs.writeFileSync("styles.css", css);
+}
+
 const ctx = await esbuild.context({
   entryPoints: ["src/main.js"],
   bundle: true,
@@ -37,9 +55,15 @@ const ctx = await esbuild.context({
   logLevel: "info",
 });
 
+buildStyles();
 if (prod) {
   await ctx.rebuild();
   process.exit(0);
 } else {
+  // esbuild's watcher only covers the JS module graph; watch the style parts ourselves.
+  fs.watch("src/styles", () => {
+    try { buildStyles(); console.log("styles.css rebuilt"); }
+    catch (e) { console.error("styles.css rebuild failed:", e.message); }
+  });
   await ctx.watch();
 }

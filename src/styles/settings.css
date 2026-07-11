@@ -1,0 +1,158 @@
+
+/* Pill grid (animation toggles, enable grids, list editor name pills). */
+.cc-pill-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 4px 0 14px;
+}
+ 
+.cc-pill {
+    padding: 4px 12px;
+    border-radius: 14px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-modifier-hover);
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    cursor: pointer;
+    box-shadow: none;
+    opacity: 0.7;
+    /* Pills are drag surfaces — prevent scroll/selection during gesture. */
+    touch-action: none;
+    user-select: none;
+}
+ 
+.cc-pill:hover {
+    opacity: 1;
+}
+ 
+.cc-pill-active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border-color: var(--interactive-accent);
+    opacity: 1;
+}
+ 
+/* Pill being dragged to reorder — slides between slots. */
+.cc-pill-dragging {
+    opacity: 0.4;
+    cursor: grabbing;
+}
+
+/* Momentarily hides an element from hit-testing (the reorder drag's elementFromPoint lookup). */
+.cc-no-hit {
+    pointer-events: none;
+}
+
+/* Character editor block */
+
+/* Per-character toggle icon (e.g. Curious) in the Name row, lit when enabled. */
+.cc-toggle-active,
+.cc-toggle-active svg {
+    color: var(--interactive-accent);
+}
+ 
+.cc-textarea {
+    width: 100%;
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-small);
+    /* Fixed, uniform height for every paste box. */
+    resize: none;
+    margin-bottom: 12px;
+}
+
+/* Settings tab bar. */
+.cc-tabbar {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 16px;
+    box-shadow: inset 0px -2px 0px var(--background-modifier-border);
+}
+
+button:not(.clickable-icon).cc-tab {
+    display: inline-flex;
+    gap: 2px;
+    align-items: center;
+    padding-inline: 8px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+    cursor: pointer;
+}
+
+button:not(.clickable-icon).cc-tab:hover {
+    color: var(--text-normal);
+    background-color: var(--interactive-normal);
+}
+
+button:not(.clickable-icon).cc-tab-active {
+    color: var(--text-normal);
+    background-color: var(--interactive-normal);
+    box-shadow: inset 0px -2px 0px var(--interactive-accent)
+}
+
+/* Iconed tabs collapse to just their icon; label reveals only while active. */
+.cc-tab-icon {
+    display: inline-flex;
+    align-items: center;
+}
+
+.cc-tab-icon .svg-icon {
+    width: 16px;
+    height: 16px;
+}
+
+.cc-tab-iconed:not(.cc-tab-active) .cc-tab-label {
+    display: none;
+}
+
+/* One-line intro at the top of each settings tab. */
+.cc-tab-intro {
+    margin-bottom: 12px;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+}
+
+/* Dual range: two sliders stacked with a value readout to the left. The first sits in flow; the second overlays it. */
+.cc-range {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Single slider filling the row beside its readout. */
+.cc-range > .cc-single-slider {
+    flex: 1 1 auto;
+    min-width: 120px;
+}
+
+.cc-range-label {
+    flex: 0 0 auto;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.cc-range-sliders {
+    position: relative;
+    flex: 1 1 auto;
+}
+
+.cc-range-sliders .slider {
+    display: block;
+    pointer-events: none;
+    min-width: 120px;
+}
+
+.cc-range-sliders .cc-range-hi {
+    position: absolute;
+    inset: 0;
+    background-color: transparent;
+}
+
+.cc-range-sliders .slider::-webkit-slider-thumb {
+    pointer-events: auto;
+}

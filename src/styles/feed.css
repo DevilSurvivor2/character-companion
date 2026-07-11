@@ -1,0 +1,132 @@
+
+/* Feed overlay: fixed, pinned to the root-split corner nearest the panel. Bubbles stack away from the corner and fade in. */
+.cc-feed {
+    position: fixed;
+    z-index: calc(var(--layer-status-bar, 15) + 1);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 280px;
+    padding: 8px;
+    pointer-events: none;
+}
+
+.cc-feed-left {
+    left: var(--cc-feed-x, 0px);
+    align-items: flex-start;
+}
+
+.cc-feed-right {
+    right: var(--cc-feed-x, 0px);
+    align-items: flex-end;
+}
+
+.cc-feed-top {
+    top: var(--cc-feed-y, 0px);
+    justify-content: flex-start;
+}
+
+.cc-feed-bottom {
+    bottom: var(--cc-feed-y, 0px);
+    justify-content: flex-end;
+}
+
+.cc-feed-bubble {
+    max-width: 100%;
+    padding: 6px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    color: var(--text-normal);
+    font-size: var(--font-ui-small);
+    box-shadow: var(--shadow-s);
+    opacity: 0;
+    /* Fade in on opacity only — avoids layer promotion that would darken neighbours. */
+    transition: opacity 200ms ease;
+    word-break: break-word;
+    font-family: var(--cc-stream-font);
+    font-feature-settings: "liga", "calt", "cpct", "swsh", "salt", "tnum", "chws", "jp78", "kern";
+}
+
+.cc-feed-bubble-visible {
+    opacity: 1;
+}
+
+/* A comment the viewer typed in the react bar — tinted with the accent. */
+.cc-feed-bubble-self {
+    border-color: var(--background-modifier-border-hover);
+    background: var(--background-modifier-hover);
+    backdrop-filter: blur(10px);
+}
+
+/* Oracle message types — distinguished by style, not text brackets. SYSTEM: faint. ANON: muted. VIP: accent border. */
+.cc-feed-bubble-sys {
+    color: var(--text-faint);
+}
+.cc-feed-bubble-anon {
+    color: var(--text-muted);
+}
+.cc-feed-bubble-vip {
+    border-color: var(--interactive-accent);
+    color: var(--text-normal);
+}
+/* Inline-highlighted run inside a bubble (currently the VIP's quoted patron modifier). Restyle freely — weight/colour/etc. */
+.cc-feed-modifier {
+    font-weight: 600;
+    color: var(--interactive-accent);
+}
+
+/* Mail mode: multi-part bubble (title/from/to/content). */
+.cc-feed-bubble-mail {
+    border-color: var(--interactive-accent);
+    width: 100%;
+}
+.cc-feed-part-title {
+    font-weight: 600;
+}
+.cc-feed-part-from,
+.cc-feed-part-to {
+    color: var(--text-muted);
+    font-size: 0.85em;
+}
+.cc-feed-part-content {
+    display: block;
+    margin-top: 4px;
+}
+
+/* Blog mode: multi-part microblog bubble (handle / body / tags). */
+.cc-feed-bubble-blog {
+    border-color: var(--interactive-accent);
+    width: 100%;
+}
+.cc-feed-part-handle {
+    font-weight: 600;
+    color: var(--interactive-accent);
+}
+/* Tags read as a muted footer, tight under the body. */
+.cc-feed-part-tags {
+    color: var(--text-muted);
+    font-size: 0.85em;
+}
+
+/* News mode: headline bubble — an optional [Section] label chip above the headline body. */
+.cc-feed-bubble-news {
+    border-color: var(--interactive-accent);
+}
+/* Section label reads as a small uppercase category chip. */
+.cc-feed-part-section {
+    display: inline-block;
+    margin-bottom: 3px;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-size: 0.75em;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+/* Scoped to news — the "body" part class is shared with blog, which stays un-bolded. */
+.cc-feed-bubble-news .cc-feed-part-body {
+    font-weight: 600;
+}
