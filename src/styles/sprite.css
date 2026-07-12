@@ -86,7 +86,7 @@
     z-index: calc(var(--layer-status-bar, 15) + 1);
 }
 
-/* In the root stage the bubble floats above the sprite's top-most coloured pixel: box top (sprite-max-height) minus the measured transparent inset, plus the gap (--cc-bubble-gap as a fraction of this surface's max-height). */
+/* Floor bubble: box top minus the measured transparent inset, plus the gap fraction. */
 .cc-walker .cc-bubble {
     position: absolute;
     left: 50%;

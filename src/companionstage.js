@@ -2,18 +2,18 @@
 const { Bag, appActive, resolvePathList, shuffle, tuning } = require("./toolkit.js");
 const { Cursor } = require("./cursor.js");
 const { MODE, Walker } = require("./walker.js");
-// One overlay pinned to the bottom of the window, holding a Walker per root-enabled character. Owns the collection, the frame loop, the shared cursor, and everything relating walkers to each other (z-layering, rest-overlap, cursor band).
+// One overlay pinned to the bottom of the window, a Walker per root-enabled character. Owns the frame loop, the shared cursor, and every walker-to-walker relation.
 class CompanionStage {
     constructor(plugin) {
         this.plugin = plugin;
         this.stageEl = null;
-        // Set by mount() from the stage's own DOM; nothing schedules a frame before then.
+        // Set by mount(); nothing schedules a frame before then.
         this.win = null;
         this.walkers = new Map();
         this.raf = null;
         this.lastFrame = null;
         this.cursor = new Cursor((x, y) => this.tickleWalkerAt(x, y));
-        // One idle + one surprise bag shared by the troupe (cycles each pool without repeats); images and quotes stay per-walker.
+        // One idle + one surprise bag shared by the troupe; images/quotes stay per-walker.
         this.idleBag = new Bag();
         this.surpriseBag = new Bag();
         // Overlapping walker pairs already z-ordered; an isolated crossing re-rolls a pair.
@@ -23,7 +23,7 @@ class CompanionStage {
     mount() {
         if (this.stageEl)
             return;
-        // Pinned to the MAIN window's body (never `activeDocument` — popouts are out of the plugin's scope), and every listener below addresses the same window/document. tick() schedules the next frame and pause() cancels it, so both MUST address the same window — a per-call `activeWindow` read would let a focus change strand a rAF that pause() can never cancel.
+        // Pinned to the MAIN window's body (never `activeDocument`); every listener below addresses the same window, so pause() can always cancel tick()'s rAF.
         this.stageEl = document.body.createDiv({ cls: "cc-root-stage" });
         this.win = this.stageEl.win;
         const doc = this.stageEl.doc;
@@ -31,7 +31,6 @@ class CompanionStage {
         this.plugin.registerDomEvent(this.win, "pointermove", (e) => this.cursor.move(e));
         this.plugin.registerDomEvent(doc.documentElement, "pointerleave", () => this.cursor.leave());
         this.refresh();
-        // Run only while the main window is the focused, visible one (appActive — a focused popout pauses the stage).
         this.plugin.registerDomEvent(this.win, "blur", () => this.sync());
         this.plugin.registerDomEvent(this.win, "focus", () => this.sync());
         this.plugin.registerDomEvent(doc, "visibilitychange", () => this.sync());
@@ -47,7 +46,7 @@ class CompanionStage {
             this.stageEl = null;
         }
     }
-    // Stop the frame loop and clear every walker's pending timer; in-flight CSS animations finish on their own, nothing new starts.
+    // Stop the frame loop and clear every walker's pending timer.
     pause() {
         if (this.raf !== null) {
             this.win.cancelAnimationFrame(this.raf);
@@ -57,7 +56,7 @@ class CompanionStage {
         for (const w of this.walkers.values())
             w.pauseRest();
     }
-    // Restart the loop (lastFrame null, so tick re-seeds and skips the first dt — no jump after a long pause). Re-arm any resting walker, whose window timer pause cleared.
+    // Restart the loop (lastFrame stays null so tick skips the first dt — no jump after a long pause) and re-arm any resting walker, whose window timer pause cleared.
     resume() {
         if (this.raf === null)
             this.raf = this.win.requestAnimationFrame(this.tick);
@@ -71,13 +70,13 @@ class CompanionStage {
         else
             this.pause();
     }
-    // Remove a walker: stop its timers and drop any layering pair naming it, so a future id can't match a stale crossing.
+    // Remove a walker: stop its timers and drop any layering pair naming it.
     destroyWalker(w) {
         w.destroy();
         for (const o of this.walkers.values())
             this.layered.delete(this.pairKey(w, o));
     }
-    // Reconcile walkers against current settings without disturbing the ones that stay, so an unrelated edit never resets positions.
+    // Reconcile walkers against current settings without disturbing the ones that stay.
     refresh() {
         const stage = this.stageEl;
         if (!stage)
@@ -117,24 +116,23 @@ class CompanionStage {
                 continue;
             }
             w.spriteUrls = urls;
-            // An unchanged path list keeps the current picture (its src is in the list); a changed one re-picks only when it must.
+            // Re-pick only when the current picture left the list.
             if (!urls.includes(w.imgEl.src))
                 w.setSprite(w.spriteBag.next(urls));
         }
-        // Re-deal stacking depth only on a cast change, so a slider tweak doesn't reshuffle who's in front.
+        // Re-deal stacking depth only on a cast change.
         if (changed)
             this.shuffleLayers();
     }
     createWalker(character, urls, speed) {
         const wrap = this.stageEl.createDiv({ cls: "cc-walker" });
         const img = wrap.createEl("img", { cls: "cc-sprite" });
-        // Bubble rides above the sprite's head; positioned in styles.css.
         const bubble = wrap.createDiv({ cls: "cc-bubble" });
         const w = new Walker(this, this.plugin, character, { wrapEl: wrap, imgEl: img, bubbleEl: bubble }, urls, speed);
-        // Provisional top rank; shuffleLayers re-deals on refresh, crossings re-roll.
+        // Provisional top rank; shuffleLayers re-deals on refresh.
         this.bringToFront(w);
         w.place();
-        // Arm its rest cycle: rest ends on a window timer, so a fresh walker needs one planted (resume() does this after a pause; this is the create path).
+        // Rest ends on a window timer, so a fresh walker needs one planted.
         w.beginRest();
         return w;
     }
@@ -155,15 +153,15 @@ class CompanionStage {
             w.step(dt);
         this.updateLayering();
     }
-    // True when two walkers' bodies intersect within `frac` of their combined half-widths. Shared by rest-overlap resolution and z-order layering.
+    // True when two walkers intersect within `frac` of their combined half-widths.
     overlap(a, b, frac) {
         return Math.abs(a.x - b.x) < (a.halfWidth + b.halfWidth) * frac;
     }
-    // Canonical key for an unordered walker pair (id order); reused for stale eviction.
+    // Canonical key for an unordered walker pair.
     pairKey(a, b) {
         return a.id < b.id ? a.id + "|" + b.id : b.id + "|" + a.id;
     }
-    // Decide stacking order when two walkers begin to overlap, so neither is permanently in front. Once per crossing (the frame they first meet), re-roll only if the pair is alone (no third walker touching either); the pair is forgotten when they part.
+    // Re-roll stacking order once per crossing, and only if the pair is alone (no third walker touching either); the pair is forgotten when they part.
     updateLayering() {
         const frac = tuning().layerOverlapFrac;
         const ws = [...this.walkers.values()];
@@ -196,12 +194,12 @@ class CompanionStage {
         }
         return true;
     }
-    // Assign a walker a stacking rank and mirror it to the DOM (--cc-z, consumed by .cc-walker's z-index). Ranks are a compact 1..N.
+    // Assign a stacking rank (compact 1..N) and mirror it to the DOM.
     setZ(w, z) {
         w.z = z;
         w.wrapEl.setCssProps({ "--cc-z": String(z) });
     }
-    // Raise a walker to the top, others keeping their relative order (renumbered 1..n-1 by current rank, this one takes rank n). A fresh walker isn't in the map yet → lands on top.
+    // Raise a walker to the top, others keeping their relative order.
     bringToFront(w) {
         const others = [...this.walkers.values()]
             .filter((o) => o !== w)
@@ -213,7 +211,7 @@ class CompanionStage {
     shuffleLayers() {
         shuffle([...this.walkers.values()]).forEach((w, i) => this.setZ(w, i + 1));
     }
-    // Play the quick tickle giggle on the walker under the point, if any (skip one held, dropping, or mid committed reaction).
+    // Play the tickle giggle on the walker under the point, if any.
     tickleWalkerAt(x, y) {
         if (y < this.stageTop())
             return;
@@ -228,7 +226,7 @@ class CompanionStage {
             return;
         }
     }
-    // Two resting walkers in the same spot: one steps aside (default the newcomer; with its "assert" toggle the occupant is shoved). The mover walks the minimum to clear the overlap. Returns whether `w` is the mover.
+    // Two resting walkers in the same spot: one steps aside (the newcomer, or with "assert" the occupant), walking the minimum to clear. Returns whether `w` moves.
     resolveRestOverlap(w) {
         const T = tuning();
         let occ = null, best = Infinity;
@@ -252,11 +250,11 @@ class CompanionStage {
         mover.beginWalk(dir, gap - Math.abs(mover.x - anchor.x));
         return mover === w;
     }
-    // Top of the floor strip the walkers occupy. Shared by cursor-react and tickle.
+    // Top of the floor strip the walkers occupy.
     stageTop() {
         return this.win.innerHeight - this.plugin.settings.rootSpriteMaxHeight;
     }
-    // The horizontal band (px) a walker may rest within. Shared by settle, resize, placement.
+    // The horizontal band (px) a walker may rest within.
     restBand() {
         const T = tuning();
         const width = this.win.innerWidth;

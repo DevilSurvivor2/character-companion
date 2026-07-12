@@ -1,19 +1,19 @@
 "use strict";
 const { ANIMS_BY_ROLE, ANIM_BY_NAME, ANIM_POOLS, CLEARABLE, HOLD_SHAKES } = require("./registries.js");
 const { Bag, bubbleHoldMs, capturePointer, randRange, releasePointer, splitQuote, spriteTopInsetFraction, tuning } = require("./toolkit.js");
-// A walker is in exactly one MODE; every interaction is a transition and the loop reads this field. WALK travelling · REST in the band · HELD carried · DROP landing · ANIM playing. Only WALK and DROP have per-frame bodies; HELD/REST/ANIM are event- or timer-driven.
+// A walker is in exactly one MODE; every interaction is a transition. Only WALK and DROP have per-frame bodies; HELD/REST/ANIM are event- or timer-driven.
 const MODE = { WALK: "walk", REST: "rest", HELD: "held", DROP: "drop", ANIM: "anim" };
-// Independent rest fidgets, each rolled on its own chance (a tuning key) and fired once at a random point in the FIRST part of the rest window (--cc-rest-idle-fraction). They layer. Add one: append a row.
+// Independent rest fidgets, each rolled on its own chance and fired once at a random point in the first --cc-rest-idle-fraction of the rest window. They layer.
 const REST_ACTIVITIES = [
     { chance: "idleChance", play: (w) => w.playIdleBeat() },
     { chance: "flipChance", play: (w) => w.flip() },
 ];
-// Held-sprite activity sequence: an ordered LOOPING list (shake-escalation climb, then an escape attempt) run by the activity runner. Each run(w, done) calls done() when finished.
+// Held-sprite activity sequence, looped by the activity runner; run(w, done) calls done().
 const HELD_ACTIVITIES = [
     { name: "shake", chance: 1, run: (w, done) => w.holdShake(done) },
     { name: "escape", chance: "escapeChance", run: (w, done) => w.holdEscape(done) },
 ];
-// Total run time (ms) of the CSS animation on an element: duration × iteration count, read from the stylesheet (computed duration is in seconds). AUTHORING RULE (see animations.css): every cc-anim class declares exactly ONE animation — the max-over-the-comma-list below is only a guard, and a composite animation would pair the longest duration with the FIRST iteration count.
+// Total run time (ms) of the element's CSS animation: duration × iteration count. Relies on the animations.css rule that every cc-anim class declares exactly ONE animation.
 function animationDurationMs(el) {
     const cs = el.win.getComputedStyle(el);
     const longest = (cs.animationDuration || "0s")
@@ -23,12 +23,12 @@ function animationDurationMs(el) {
     const iter = iterRaw === "infinite" ? 1 : parseFloat(iterRaw) || 1;
     return longest * iter;
 }
-// A role's enabled animations, optionally limited to the walker-safe subset (root:false keeps a move off the floor).
+// A role's enabled animations; rootOnly excludes root:false moves.
 function enabledList(settings, role, rootOnly) {
     const pool = ANIM_POOLS[role];
     return pool.all.filter((a) => (!rootOnly || ANIM_BY_NAME[a].root !== false) && settings[pool.flag][a]);
 }
-// One sprite's whole life: DOM, state, and every self-contained behaviour (motion, animation, rest fidgets, grab/carry, the activity runner, timers). Cross-walker coordination lives on CompanionStage via `this.stage` (null for a stage-less sprite).
+// One sprite's whole life: DOM, state, and every self-contained behaviour. Cross-walker coordination lives on CompanionStage via `this.stage` (null for a stage-less sprite).
 class Walker {
     constructor(stage, plugin, character, els, urls, speed) {
         this.stage = stage;
@@ -38,11 +38,11 @@ class Walker {
         this.wrapEl = els.wrapEl;
         this.imgEl = els.imgEl;
         this.bubbleEl = els.bubbleEl;
-        // The window this sprite's DOM actually lives in — always the main window (the panel refuses popouts, the stage is pinned there). Captured once and used for every timer AND every geometry read below, never `activeWindow`: timer ids don't cross windows, and a focused popout must not lend its dimensions to a main-window sprite.
+        // The owning window, captured once for every timer and geometry read (never `activeWindow` — timer ids don't cross windows).
         this.win = els.wrapEl.win;
-        // Set only for a fixed (frame-escaping) sidebar bubble: the element whose head the bubble is JS-positioned over. Null for the floor bubble (an absolute child of its own walker wrap, positioned by CSS).
+        // Set only for the sidebar's JS-positioned bubble; null for the CSS-positioned floor bubble.
         this.bubbleAnchorEl = els.bubbleAnchorEl || null;
-        // Images/quotes are per-sprite; idle/surprise share one bag each across the troupe (stage cycles them without repeats), falling back to private when stageless.
+        // Images/quotes are per-sprite; idle/surprise share one bag each across the troupe.
         this.spriteBag = new Bag();
         this.quoteBag = new Bag();
         this.idleBag = stage ? stage.idleBag : new Bag();
@@ -51,22 +51,22 @@ class Walker {
         this.roleBags = {};
         this.spriteUrls = urls;
         this.speed = speed;
-        // ---- role variables ---- The universal cycle reads ONLY these flags, never `this.stage`, so a surface configures a walker by setting them rather than forking on type.
+        // ---- role variables ---- The cycle branches only on these flags, never on `this.stage`: a surface configures a walker by setting them.
         this.grabbable = !!stage; // pointer-grab lifts it into HELD/DROP; else a tap just wakes
         this.rootOnly = !!stage;  // exclude off-floor animations the bottom strip would clip
         this.canSleep = !stage;   // may doze when untouched (also gated live by stream mode)
         this.halfWidth = 0;
         const T = tuning();
-        // Start inside the rest band so even a standing (0%) walker isn't jammed against an edge. (A stage-less sprite isn't x-positioned.)
+        // Start inside the rest band; a stage-less sprite isn't x-positioned.
         const band = stage ? stage.restBand() : null;
         this.x = band ? randRange(band.lo, band.hi) : 0;
         this.walkDir = 1;
         this.walkDist = 0;
-        // The walk's live pace. beginWalk starts it at the walker's own speed; cursor react steers it (and walkDir/walkDist) mid-walk.
+        // The walk's live pace; cursor react steers it mid-walk.
         this.walkPace = speed;
         this.mode = MODE.REST;
         this.interruptible = false;
-        // Provisional; beginRest (via createWalker / first resume) sets the real one.
+        // Provisional; beginRest sets the real one.
         this.restUntil = performance.now();
         this.phase = 0;
         this.yOffset = T.walkRestY;
@@ -81,7 +81,7 @@ class Walker {
         this.lastMoveX = 0;
         this.lastMoveT = 0;
         this.flickVel = 0;
-        // Activity runner state, torn down together by clearActivities (token no-ops stale callbacks).
+        // Activity runner state, torn down together by clearActivities.
         this.actTimers = [];
         this.actToken = 0;
         this.actIndex = 0;
@@ -89,9 +89,9 @@ class Walker {
         this.actLoop = false;
         this.watchUntil = 0;
         this.easeTimer = null;
-        // The single live timer of a speak sequence. A quote types out sentence by sentence, but strictly one step at a time (each typewriter tick / sentence hold schedules the next), so only ever one is pending.
+        // The single live timer of a speak sequence (each step schedules the next).
         this.bubbleTimer = null;
-        // The pending end timer of the sprite's image animation (see playAnimation).
+        // The pending end timer of the sprite's image animation.
         this.animTimer = null;
         // Sleep clock: time of last interaction.
         this.lastInteraction = Date.now();
@@ -101,10 +101,10 @@ class Walker {
         this.imgEl.addEventListener("pointermove", (e) => this.onMove(e));
         this.imgEl.addEventListener("pointerup", (e) => this.onUp(e));
         this.imgEl.addEventListener("pointercancel", (e) => this.onCancel(e));
-        // On each load, cache the half-width (so the walk loop avoids a per-frame reflow) and re-anchor the bubble now that the rendered height is real.
+        // On each load, cache the half-width (no per-frame reflow) and re-anchor the bubble.
         this.imgEl.addEventListener("load", () => { this.halfWidth = this.imgEl.offsetWidth / 2; this.applyBubbleInset(); });
         this.setSprite(this.spriteBag.next(urls));
-        // A cached/data-URL sprite can complete synchronously (no load event guaranteed); setSprite's inset pass already covers it, only the half-width needs seeding.
+        // A cached/data-URL sprite can complete synchronously with no load event.
         if (this.imgEl.complete && this.imgEl.offsetWidth)
             this.halfWidth = this.imgEl.offsetWidth / 2;
     }
@@ -126,13 +126,13 @@ class Walker {
             this.x = width + margin;
         this.arc(dx);
     }
-    // Advance the walk bob by a stride and set the vertical, leaving x untouched: one full step per walkStepLength of travel, so every character shares the same bob cycle and only its speed scales the cadence (a boosted flee steps faster too).
+    // Advance the walk bob by a stride, leaving x untouched: one full step per walkStepLength of travel, so speed alone scales the cadence.
     arc(stride) {
         const T = tuning();
         this.phase += (Math.abs(stride) / T.walkStepLength) * Math.PI;
         this.yOffset = T.walkRestY + (T.walkLiftY - T.walkRestY) * Math.abs(Math.sin(this.phase));
     }
-    // One frame. HELD/DROP own the sprite and skip cursor-react; the react only steers walk variables / requests transitions, then the mode table below does all the moving.
+    // One frame. HELD/DROP own the sprite and skip cursor-react.
     step(dt) {
         if (this.mode !== MODE.HELD && this.mode !== MODE.DROP)
             this.applyCursorReact();
@@ -141,7 +141,7 @@ class Walker {
         else if (this.mode === MODE.DROP)
             this.dropStep();
     }
-    // WALK body — the only mover: travel walkDir × walkPace until the distance is spent, settle when done. Cursor react steers it purely by writing the three walk variables (walkDir, walkPace, walkDist). Travel drives the bob; a parked walk (walkPace 0, the cursor stop gap) breathes it at the walker's own speed instead, so a stopped watcher keeps its own cadence (a 0%-speed character never reaches WALK, so the stride is never zero here).
+    // WALK body — the only mover: travel walkDir × walkPace until the distance is spent, settle when done. A parked walk (walkPace 0, the cursor stop gap) breathes the bob at the walker's own speed instead.
     walkStep(dt) {
         const advance = Math.min(this.walkPace * dt, this.walkDist);
         this.walkDist -= advance;
@@ -153,7 +153,7 @@ class Walker {
         if (this.walkDist <= 0)
             this.settle();
     }
-    // Glide the image's (maybe mid-animation) transform back to rest: freeze the live pose inline, arm the eased transition, clear it next reflow so it eases to identity. Returns whether there was a pose to settle (caller waits --cc-ease only if so).
+    // Glide the image's (maybe mid-animation) transform back to rest: freeze the live pose inline, arm the eased transition, clear it so it eases to identity. Returns whether there was a pose to settle.
     easeImagePose() {
         const img = this.imgEl;
         const current = this.win.getComputedStyle(img).transform;
@@ -166,11 +166,11 @@ class Walker {
         img.setCssProps({ transform: "" });
         return true;
     }
-    // The universal ease — the single buffer every cross-mode transition passes through: settle any in-flight image animation back to rest AND glide the wrap's vertical to targetY, then run `then` after --cc-ease (at once if nothing to ease). Caller owns the mode; this also tears down the old mode's activity sequence.
+    // The universal ease every cross-mode transition passes through: settle any in-flight image animation AND glide the wrap's vertical to targetY, then run `then` after --cc-ease (at once if nothing to ease). Caller owns the mode; this also tears down the old mode's activity sequence.
     easeToward(targetY, then) {
         this.clearActivities();
         this.endWatch();
-        // A pending ease timer means a previous ease is still in flight: yOffset already holds THAT ease's target, but the rendered position is mid-glide. Count it as movement even when the target matches, so this call re-arms the glide (a live transition retargets smoothly) instead of early-returning — an early return would run `then` mid-glide with cc-eased stranded, and the next setEasing(false) would snap the sprite to the target. (Only the timer is cleared, never endEase: the eased state must survive the retarget.)
+        // A previous ease still in flight must count as movement even when the target matches (yOffset already holds that ease's target but the render is mid-glide), so the glide re-arms instead of running `then` mid-glide with cc-eased stranded. Only the timer is cleared, never endEase: the eased state survives the retarget.
         const gliding = this.easeTimer !== null;
         if (gliding) { this.win.clearTimeout(this.easeTimer); this.easeTimer = null; }
         const easingImg = this.easeImagePose();
@@ -192,19 +192,19 @@ class Walker {
                 then();
         }, tuning().ease);
     }
-    // End the ease now — drop any pending ease timer and strip the eased state (both cc-eased classes and the frozen inline pose) so nothing smooths (or later snaps) a value-driven frame. The timer's own tail AND the cut-short for every early exit (full teardown, drop release); a no-op when nothing is easing.
+    // End the ease now: drop the pending timer and strip the eased state so nothing smooths (or later snaps) a value-driven frame. No-op when nothing is easing.
     endEase() {
         if (this.easeTimer) { this.win.clearTimeout(this.easeTimer); this.easeTimer = null; }
         this.imgEl.classList.remove("cc-eased");
         this.imgEl.setCssProps({ transform: "" });
         this.setEasing(false);
     }
-    // React to a cursor near the band — pure steering, refreshed every frame while reachable: it only writes the three walk variables (walkDir, walkPace, walkDist) on a live walk, claiming WALK through easeToward first when needed. It never touches the vertical itself — the bob simply rides the walk's stride, so a boosted flee is exactly the plain walk (and its bob) sped up.
+    // React to a cursor near the band — pure steering, refreshed every frame: it only writes the three walk variables (walkDir, walkPace, walkDist), claiming WALK through easeToward first when needed. The bob simply rides the walk's stride.
     applyCursorReact() {
         const T = tuning();
         const cursor = this.stage.cursor;
         const gap = this.x - cursor.x;
-        // Out of reach: end any watch (so the next visit arms a fresh window), restore the walk's own pace, and let it run out on its own (a fled walker calmly finishes its leftover distance and settles).
+        // Out of reach: restore the walk's own pace and let it run out on its own.
         if (cursor.x < 0 || cursor.y < this.stage.stageTop() - T.reactRadius || Math.abs(gap) > T.reactRadius) {
             this.endWatch();
             if (this.mode === MODE.WALK)
@@ -214,20 +214,20 @@ class Walker {
         if (this.mode === MODE.ANIM && !this.interruptible)
             return;
         const curious = this.character.curious;
-        // Curious stop gap: park the travel (walkPace 0 — the walk stays in WALK and keeps breathing its bob) and roll the chatter window.
+        // Curious stop gap: park the travel (walkPace 0) and roll the chatter window.
         if (curious && Math.abs(gap) <= T.curiousGap) {
             if (this.mode === MODE.WALK)
                 this.walkPace = 0;
             this.watchTick();
             return;
         }
-        // A standing (0%-speed) character can't walk, so it neither flees nor approaches; up close it only chatters (above).
+        // A standing (0%-speed) character neither flees nor approaches.
         if (this.speed <= 0)
             return;
-        // Steer — one fast biased walk either way, only the direction and target differ: flee = away, running a full radius so it never settles inside one; curious = toward, the gap itself as the distance (the stop gap above parks it on arrival).
+        // Steer: flee = away for a full radius; curious = toward, the gap as the distance.
         const dir = (gap >= 0 ? 1 : -1) * (curious ? -1 : 1);
         if (this.mode !== MODE.WALK) {
-            // Claim WALK through the ease. Non-interruptible ANIM doubles as the latch: until beginWalk lands, every frame bounces off the guard above instead of re-claiming.
+            // Claim WALK through the ease. Non-interruptible ANIM is the latch: until beginWalk lands, every frame bounces off the guard above.
             this.mode = MODE.ANIM;
             this.interruptible = false;
             this.easeToward(T.walkRestY, () => this.beginWalk(dir));
@@ -237,7 +237,7 @@ class Walker {
         this.walkPace = this.speed * T.reactSpeedMult;
         this.walkDist = curious ? Math.abs(gap) : T.reactRadius;
     }
-    // Curiosity chatter: while watching the cursor, arm a randomised window; each time one elapses, re-arm and roll once to speak a line (skip if a bubble is already up).
+    // Curiosity chatter: each elapsed watch window re-arms and rolls once to speak a line.
     watchTick() {
         const T = tuning();
         const now = performance.now();
@@ -256,7 +256,7 @@ class Walker {
         this.watchUntil = 0;
     }
     beginWalk(dir, remaining) {
-        // 0% speed never travels, so a "walk" just keeps resting — the single variable that makes a panel sprite and a 0-speed floor sprite behave alike.
+        // 0% speed never travels: a "walk" just keeps resting.
         if (this.speed <= 0) {
             this.beginRest();
             return;
@@ -266,7 +266,7 @@ class Walker {
         this.endWatch();
         // The arc drives --cc-y every frame, so the smoothing transition must be off.
         this.setEasing(false);
-        // walkDir/walkDist default to random (a walkaside passes an explicit minimum); walkPace starts at the walker's own speed. Cursor react may steer all three mid-walk.
+        // dir/remaining default to random (a walkaside passes an explicit minimum).
         this.walkDir = dir ?? (Math.random() < 0.5 ? -1 : 1);
         this.walkDist = remaining ?? Math.random() * T.walkMaxDistanceFrac * this.win.innerWidth;
         this.walkPace = this.speed;
@@ -283,9 +283,9 @@ class Walker {
     beginRest() {
         const T = tuning();
         this.mode = MODE.REST;
-        // Sync the doze dim to the sleep clock once per cycle, so falling asleep dims promptly (and waking undims) without waiting for a doze beat.
+        // Sync the doze dim to the sleep clock once per cycle.
         this.setAsleep(this.isAsleep());
-        // Resolve a same-spot overlap before any rest glide; if THIS walker yields it keeps walking (no glide) so the vertical doesn't snap.
+        // Resolve a same-spot overlap before any rest glide; a yielding walker keeps walking (no glide) so the vertical doesn't snap.
         if (this.stage && this.stage.resolveRestOverlap(this))
             return;
         this.restUntil = performance.now() + this.restWindowMs();
@@ -294,13 +294,13 @@ class Walker {
         this.easeToward(T.walkRestY);
         this.scheduleRest();
     }
-    // Length of one rest window — the idle min–max delay (the single rest-time source for every walker), stretched by the sleep multiplier while asleep.
+    // One rest window: the idle min–max delay, stretched by the sleep multiplier.
     restWindowMs() {
         const T = tuning();
         const base = randRange(T.idleMinDelay, T.idleMaxDelay);
         return this.isAsleep() ? base * T.sleepMultiplier : base;
     }
-    // ---- sleep ---- Asleep once a sleep-capable walker has gone untouched for sleepAfterMs. Gated by `canSleep` (off for floor walkers) and forced off live in stream mode.
+    // Asleep once untouched for sleepAfterMs; gated by canSleep, forced off in stream mode.
     isAsleep() {
         const ms = this.settings.sleepAfterMs;
         return this.canSleep && !this.settings.streamEnabled && ms > 0 && Date.now() - this.lastInteraction >= ms;
@@ -309,7 +309,7 @@ class Walker {
     setAsleep(asleep) {
         this.wrapEl.classList.toggle("cc-asleep", asleep);
     }
-    // Any interaction resets the sleep clock, undims, and (if resting) re-arms the cycle so the awake cadence takes effect at once.
+    // Any interaction resets the sleep clock, undims, and (if resting) re-arms the cycle.
     wake() {
         this.lastInteraction = Date.now();
         this.setAsleep(false);
@@ -328,15 +328,15 @@ class Walker {
         if (this.mode === MODE.REST && this.actTimers.length === 0)
             this.beginRest();
     }
-    // Toggle the short bottom-easing transition. On for lift / rest-descent (value-driven); off for walking / the landing bounce (loop-driven).
+    // Toggle the eased transition: on for value-driven moves, off for loop-driven ones.
     setEasing(on) {
         this.wrapEl.classList.toggle("cc-eased", on);
     }
-    // Flick friction: bleed |flickVel| toward zero at flickDecel over dt while the drop slide is in flight.
+    // Flick friction: bleed |flickVel| toward zero at flickDecel over dt.
     brakeFlick(dt) {
         this.flickVel -= Math.sign(this.flickVel) * Math.min(Math.abs(this.flickVel), tuning().flickDecel * dt);
     }
-    // Land from a lift: a damped vertical bounce plus any horizontal flick decaying to a stop, both loop-driven. Ends once the bounce time is up AND the slide has stopped.
+    // Land from a lift: a damped vertical bounce plus any horizontal flick decaying to a stop. Ends once the bounce time is up AND the slide has stopped.
     dropStep() {
         const T = tuning();
         const durS = T.dropDuration / 1000;
@@ -376,18 +376,18 @@ class Walker {
     flip() {
         if (this.mode !== MODE.REST || this.spriteUrls.length < 2)
             return;
-        // A flip animates, so it restarts the rest window (easeToward → beginRest) and re-rolls itself at once — without this cooldown two swaps could land back-to-back. Self-contained: `lastFlip` is owned and read only here (lazily 0 on the first flip).
+        // A flip restarts the rest window and re-rolls itself at once; the cooldown stops two swaps landing back-to-back.
         const now = performance.now();
         if (now - (this.lastFlip ?? 0) < tuning().flipCooldown)
             return;
         this.lastFlip = now;
         this.playRole("flip", true);
-        // Tracked in actTimers (queued AFTER playRole, whose easeToward clears them) so a teardown mid-flip also cancels the swap.
+        // Queued AFTER playRole (whose easeToward clears actTimers) so a teardown mid-flip also cancels the swap.
         this.actTimers.push(this.win.setTimeout(() => {
             this.setSprite(this.spriteBag.next(this.spriteUrls));
         }, tuning().flipSwap));
     }
-    // Stop the sprite's animation: cancel the pending end timer and strip the behaviour class (which drops the sprite back to its transform rest — see styles.css).
+    // Stop the sprite's animation: cancel the pending end timer, strip the behaviour class.
     stopAnimation() {
         if (this.animTimer != null) {
             this.win.clearTimeout(this.animTimer);
@@ -395,12 +395,12 @@ class Walker {
         }
         this.imgEl.classList.remove(...CLEARABLE);
     }
-    // Play an animation spec (an ANIMATIONS row or { name }) on the sprite's image: stop any in-flight one first, apply `cc-anim-<spec.name>`. onEnd fires off a timer sized from the CSS duration (animationend is unreliable for custom-property animations).
+    // Play an animation spec on the sprite's image. onEnd fires off a timer sized from the CSS duration (animationend is unreliable for custom-property animations).
     playAnimation(spec, onEnd) {
         this.stopAnimation();
         // Reflow so re-adding the same class restarts its animation.
         void this.imgEl.offsetWidth;
-        // Maybe reverse this round's horizontal motion via --cc-dir (negates movement only, never mirrors artwork).
+        // --cc-dir negates horizontal movement only, never mirrors artwork.
         if (spec.directional)
             this.imgEl.setCssProps({ "--cc-dir": Math.random() < 0.5 ? "-1" : "1" });
         this.imgEl.classList.add("cc-anim-" + spec.name);
@@ -411,13 +411,13 @@ class Walker {
                 onEnd();
         }, animationDurationMs(this.imgEl));
     }
-    // Play a random animation of a function-role (flip/bob/tickle/sleep), drawn without repeats from a per-role bag. The single path for every role-named behaviour.
+    // Play a random animation of a function-role (flip/bob/tickle/sleep), without repeats.
     playRole(role, interruptible = false) {
         const name = (this.roleBags[role] ??= new Bag()).next(ANIMS_BY_ROLE[role]);
         if (name)
             this.beginAnim(ANIM_BY_NAME[name], interruptible);
     }
-    // Play an interaction animation (idle move or reaction): enter ANIM, ease any in-flight pose to rest, play this one, settle into rest. `interruptible` = a cursor may cut it short.
+    // Enter ANIM, ease any in-flight pose to rest, play, then settle into rest. `interruptible` = a cursor may cut it short.
     beginAnim(spec, interruptible = false) {
         this.mode = MODE.ANIM;
         this.interruptible = interruptible;
@@ -425,7 +425,7 @@ class Walker {
             this.playAnimation(spec, () => this.beginRest());
         });
     }
-    // ---- activity runner (shared, mode-scoped) ---- Run an ordered activity list: each row rolled on its chance, passers run in order (next starts when the previous calls done()). loop=true repeats.
+    // ---- activity runner ---- Run an ordered activity list: each row rolled on its chance, the next starting when the previous calls done(). loop=true repeats.
     runActivities(list, loop) {
         this.clearActivities();
         this.actList = list;
@@ -437,7 +437,7 @@ class Walker {
         // A torn-down run bumped the token, so a stale callback no-ops.
         if (token !== this.actToken)
             return;
-        // Iterative execution to prevent unbounded synchronous recursion. A full lap of failures terminates the run.
+        // Iterative so failed rolls can't recurse; a full lap of failures ends the run.
         for (let tries = this.actList.length; tries > 0; tries--) {
             if (this.actIndex >= this.actList.length) {
                 if (!this.actLoop)
@@ -452,14 +452,14 @@ class Walker {
             }
         }
     }
-    // Tear down the activity sequence: drop pending timers, bump the token so an in-flight runner callback no-ops. The one teardown used by every mode exit.
+    // Tear down the activity sequence: drop pending timers, bump the token.
     clearActivities() {
         this.actToken++;
         for (const id of this.actTimers)
             this.win.clearTimeout(id);
         this.actTimers.length = 0;
     }
-    // Full teardown (pause off screen / destroy): every timer, any in-flight image animation, and the bubble. Widest of three scopes (clearActivities = the sequence; endDrag = the carry). The bubble's visible CLASS is dropped too, else a stranded bubble wedges the rest cycle (playIdleBeat won't speak over a visible one).
+    // Full teardown (pause off screen / destroy): every timer, any in-flight image animation, and the bubble — a stranded visible bubble would wedge the rest cycle.
     clearTimers() {
         this.clearActivities();
         this.stopAnimation();
@@ -468,11 +468,11 @@ class Walker {
         if (this.bubbleEl)
             this.bubbleEl.removeClass("cc-bubble-visible");
     }
-    // Cancel the in-flight speak sequence (whichever step is pending). Leaves the visible class alone — speak() re-arms it, clearTimers() drops it.
+    // Cancel the in-flight speak sequence; leaves the visible class alone.
     clearBubbleTimer() {
         if (this.bubbleTimer) { this.win.clearTimeout(this.bubbleTimer); this.bubbleTimer = null; }
     }
-    // True while the pointer isn't meaningfully moving the sprite. Shared by the held escape watch and release's set-down-vs-flick decision.
+    // True while the pointer isn't meaningfully moving the sprite.
     isPointerStill() {
         const T = tuning();
         return (performance.now() - this.lastMoveT > T.walkMaxFrame)
@@ -495,7 +495,7 @@ class Walker {
         };
         bout();
     }
-    // HELD activity: an escape attempt. Without the escape toggle, hold for the window then loop back to shaking. With it, break free if the pointer is still (one shake, then released to drop); if still dragging, the escape fails.
+    // HELD activity: an escape attempt. Without the escape toggle, just hold for the window; with it, break free if the pointer is still.
     holdEscape(done) {
         const T = tuning();
         if (!this.character.escape) {
@@ -505,7 +505,6 @@ class Walker {
         this.actTimers.push(this.win.setTimeout(() => {
             if (this.mode !== MODE.HELD)
                 return;
-            // Wriggle free only if the pointer is still (same test release uses).
             if (this.isPointerStill())
                 this.playAnimation(ANIM_BY_NAME[HOLD_SHAKES[0]], () => {
                     if (this.mode === MODE.HELD)
@@ -515,7 +514,7 @@ class Walker {
                 done();
         }, T.escapeStillWindow));
     }
-    // Arm one rest window, uniformly for every walker: roll each independent fidget for a random point in the first part of the window (they layer), then plant the window-end timer that re-enters the cycle. (playIdleBeat dozes on its own when asleep.)
+    // Arm one rest window: roll each fidget for a random point in its first part, then plant the window-end timer that re-enters the cycle.
     scheduleRest() {
         this.clearActivities();
         const windowMs = this.restUntil - performance.now();
@@ -528,10 +527,10 @@ class Walker {
             const delay = Math.random() * windowMs * T.restIdleFraction;
             this.actTimers.push(this.win.setTimeout(() => act.play(this), delay));
         }
-        // End the window: a mover walks, a 0-speed sprite re-rests. A fidget that animates first cancels this through easeToward; otherwise it fires here.
+        // End the window: a mover walks, a 0-speed sprite re-rests. A fidget that animates first cancels this through easeToward.
         this.actTimers.push(this.win.setTimeout(() => this.beginWalk(), windowMs));
     }
-    // One rest beat. Asleep → a doze (the dim is synced in beginRest). Awake → a spoken line or an idle move, gated by settings (chatter chance = how often a beat speaks vs moves). The idle pool excludes off-floor strolls for a root-only walker.
+    // One rest beat: asleep → a doze; awake → a spoken line or an idle move, per settings.
     playIdleBeat() {
         if (this.mode !== MODE.REST)
             return;
@@ -554,7 +553,7 @@ class Walker {
         if (name)
             this.beginAnim(ANIM_BY_NAME[name], true);
     }
-    // Speak one line through the one bubble — by default one of the character's quotes (drawn without repeats); a caller may pass an explicit `line` (a rolled table result, a fed message) to voice arbitrary text through the identical pipeline. With quoteTypewriter "slow"/"fast", split into sentences typed out consecutively (the CommentFeed "push a part" idea, but sequential — one held at a time, not stacked); "off", the whole line is one chunk shown at once. No-op with no bubble/nothing to say; a blank/punctuation-only line yields no chunks and is skipped.
+    // Speak one line through the bubble — by default a non-repeating quote draw; a caller may pass an explicit `line`. Typewriter modes split it into sentences typed out consecutively; "off" shows the whole line at once.
     speak(line = this.quoteBag.next(this.character.quotes)) {
         if (!this.bubbleEl || !line)
             return;
@@ -566,7 +565,7 @@ class Walker {
         this.bubbleEl.addClass("cc-bubble-visible");
         this.playChunk(chunks, 0);
     }
-    // Reveal chunk `idx` (typed out when streaming, dropped in whole when not), hold it for its length-scaled duration (bubbleHoldMs — the shared staying-time rule, spending quoteDurationMs over this bubble), then advance to the next chunk or hide after the last. Each chunk holds for its own content, so a multi-sentence stream runs proportionally longer.
+    // Reveal chunk `idx`, hold it for its length-scaled duration (bubbleHoldMs), then advance to the next chunk or hide after the last.
     playChunk(chunks, idx) {
         const hold = () => {
             this.bubbleTimer = this.win.setTimeout(() => {
@@ -580,7 +579,7 @@ class Walker {
             this.typeOut(chunks[idx], this.wrapBreaks(chunks[idx]), 0, hold);
         else { this.bubbleEl.setText(chunks[idx]); hold(); }
     }
-    // Where the bubble will wrap `text` — the char index each visual line after the first begins at. Measured on the real bubble itself: set to the full text and read synchronously, then emptied by the reveal before the next paint, so the full line never flashes and the breaks are the browser's own by construction. typeOut applies them as hard breaks while revealing, which lets a word sit on its final line from its first character instead of growing on one line and jumping to the next.
+    // Where the bubble will wrap `text` — the char index each visual line after the first begins at. Measured synchronously on the real bubble (emptied by the reveal before the next paint, so the full line never flashes); typeOut applies them as hard breaks so a word sits on its final line from its first character.
     wrapBreaks(text) {
         this.bubbleEl.setText(text);
         const node = this.bubbleEl.firstChild;
@@ -599,7 +598,7 @@ class Walker {
         }
         return breaks;
     }
-    // Paint the first `i` chars of `text` with the pre-measured wraps applied as hard breaks, so the box grows line by line (width within a line, height as a new line opens) with no reserved empty space and no word ever teleporting. A completed line sheds its trailing wrap space.
+    // Paint the first `i` chars of `text` with the pre-measured wraps as hard breaks; a completed line sheds its trailing wrap space.
     renderReveal(text, breaks, i) {
         this.bubbleEl.empty();
         const bounds = [...breaks, text.length];
@@ -615,7 +614,7 @@ class Walker {
             start = end;
         }
     }
-    // Reveal `text` one char at a time (wrapped at the pre-measured `breaks`), calling done() when whole. The gap after a char lengthens on punctuation: end marks (. ! ? and a sentence-final …) add --cc-quote-pause-end, mid marks (, ; — and a mid-sentence …) add --cc-quote-pause-mid (half). A … is sentence-final when only whitespace follows it in this already-split sentence.
+    // Reveal `text` one char at a time, calling done() when whole. Punctuation lengthens the next gap: end marks add --cc-quote-pause-end, mid marks --cc-quote-pause-mid.
     typeOut(text, breaks, i, done) {
         this.renderReveal(text, breaks, i);
         if (i >= text.length) { done(); return; }
@@ -630,12 +629,12 @@ class Walker {
             delay += T.quotePauseMid;
         this.bubbleTimer = this.win.setTimeout(() => this.typeOut(text, breaks, i + 1, done), delay);
     }
-    // The single path to point the sprite at a URL: swap the image, then re-anchor the bubble to the new artwork. Every src assignment (create, rest flip, url refresh) routes here so the inset stays in sync.
+    // The single path to point the sprite at a URL — keeps the bubble inset in sync.
     setSprite(url) {
         this.imgEl.src = url;
         this.applyBubbleInset();
     }
-    // Lift the bubble by the current sprite's transparent-top inset (measured async, cached per URL) so it hugs the artwork, not the empty box top. Guards against a sprite swap resolving late; a not-yet-laid-out image reads 0 height here and is corrected by the load-listener re-run. The wrap's --cc-bubble-inset is the single store: styles.css positions the floor bubble off it, positionBubble reads it back for the sidebar bubble.
+    // Lift the bubble by the sprite's transparent-top inset. Guards against a sprite swap resolving late; a not-yet-laid-out image reads 0 and is corrected by the load re-run. The wrap's --cc-bubble-inset is the single store for both bubble flavours.
     applyBubbleInset() {
         const url = this.imgEl.src;
         spriteTopInsetFraction(url).then((frac) => {
@@ -644,12 +643,12 @@ class Walker {
             this.wrapEl.setCssProps({ "--cc-bubble-inset": frac * this.imgEl.offsetHeight + "px" });
         });
     }
-    // Place the body-level sidebar bubble against the sprite. It lives on <body> (like the comment feed) so no panel frame clips it, so coordinates are viewport-relative and set here: centred on the picture, bottom edge floating --cc-bubble-gap above the top-most coloured pixel (picture top + measured inset), tail pointing down. No-op for the floor bubble (no anchor) — CSS positions that one off the same inset + gap.
+    // Place the body-level sidebar bubble against the sprite (viewport coordinates — it lives on <body> so no panel frame clips it). No-op for the CSS-positioned floor bubble.
     positionBubble() {
         if (!this.bubbleAnchorEl)
             return;
         const r = this.bubbleAnchorEl.getBoundingClientRect();
-        // Gap is a fraction of this surface's sprite max-height (sidebar-only path — the floor bubble is CSS-positioned), keeping the float proportional across the two heights.
+        // Gap is a fraction of this surface's sprite max-height.
         const gap = tuning().bubbleGap * this.settings.sidebarSpriteMaxHeight;
         const inset = parseFloat(this.wrapEl.style.getPropertyValue("--cc-bubble-inset")) || 0;
         this.bubbleEl.setCssProps({
@@ -657,7 +656,7 @@ class Walker {
             bottom: (this.win.innerHeight - r.top - inset + gap) + "px",
         });
     }
-    // Answer a double-tap: a surprise animation or (optionally) a bob plus a spoken line. End the carry first (no bounce); settle to rest if nothing animated. (The sprite image only ever swaps via the chanced flip rest activity, never on a poke.)
+    // Answer a double-tap: a surprise animation, or a bob plus a spoken line. Ends the carry first (no bounce); settles to rest if nothing animated.
     react() {
         this.endDrag();
         this.mode = MODE.REST;
@@ -674,16 +673,16 @@ class Walker {
         if (this.mode === MODE.REST)
             this.beginRest();
     }
-    // Tear down a pick-up: clear the held sequence + the dragging class. The single place the carry ends — release and react both route here.
+    // Tear down a pick-up — the single place the carry ends.
     endDrag() {
         this.clearActivities();
         this.stopAnimation();
         this.imgEl.classList.remove("cc-dragging");
     }
-    // The universal set-down: end the carry, resolve the release velocity, hand the landing bounce (and any flick) to the loop. isPointerStill tells a set-down (zero flickVel) from a flick (flickVel is stale when the pointer is held still).
+    // The universal set-down: end the carry, resolve the release velocity, hand the landing bounce (and any flick) to the loop. isPointerStill tells a set-down from a flick (flickVel is stale when the pointer is held still).
     release() {
         this.endDrag();
-        // DROP takes the wrap loop-driven, so end any in-flight lift glide (a quick flick can release inside grab's ease) instead of leaving its timer pending.
+        // DROP is loop-driven, so end any in-flight lift glide (a quick flick can release inside grab's ease).
         this.endEase();
         this.phase = 0;
         if (this.isPointerStill())
@@ -692,14 +691,14 @@ class Walker {
         this.dropStart = performance.now();
         this.dropLastT = 0;
     }
-    // ---- pointer input: grab, carry, drop, double-tap ---- Clamp x to the visible margins and commit the position.
+    // ---- pointer input ---- Clamp x to the visible margins and commit the position.
     moveTo(clientX) {
         const width = this.win.innerWidth;
         const margin = this.margin();
         this.x = Math.min(width - margin, Math.max(margin, clientX));
         this.place();
     }
-    // Pick the sprite straight up at the pointer: ease the lift up, move it under the pointer, arm the held sequence after a delay.
+    // Pick the sprite straight up at the pointer; arm the held sequence after a delay.
     grab(clientX) {
         const T = tuning();
         this.mode = MODE.HELD;
@@ -720,7 +719,7 @@ class Walker {
         this.pressX = e.clientX;
         this.pressY = e.clientY;
         this.pressMoved = false;
-        // Grabbable → capture and pick straight up. Non-grabbable → a press just wakes it (a double tap, detected on release, reacts).
+        // Grabbable → capture and pick straight up; non-grabbable → a press just wakes it.
         if (this.grabbable) {
             capturePointer(this.imgEl, e.pointerId);
             this.grab(e.clientX);
@@ -733,12 +732,12 @@ class Walker {
         if (this.pointerId === null || e.pointerId !== this.pointerId || this.mode !== MODE.HELD)
             return;
         const T = tuning();
-        // Past the threshold this press is a carry, not a tap: follow the pointer directly, so drop the lift-ease.
+        // Past the threshold this press is a carry, not a tap: follow the pointer directly.
         if (!this.pressMoved && Math.hypot(e.clientX - this.pressX, e.clientY - this.pressY) >= T.dragThreshold) {
             this.pressMoved = true;
             this.setEasing(false);
         }
-        // Live pointer velocity = the last segment's instantaneous speed (dt floored to reject sub-frame spikes). Instantaneous reads ~0 the moment the pointer stops, so isPointerStill catches a decelerate-then-release that a lagging average would miss.
+        // Instantaneous pointer velocity (dt floored to reject sub-frame spikes): reads ~0 the moment the pointer stops, so a decelerate-then-release counts as a set-down.
         const now = performance.now();
         const dtv = Math.max((now - this.lastMoveT) / 1000, T.flickSampleFloor / 1000);
         this.flickVel = (e.clientX - this.lastMoveX) / dtv;
@@ -754,7 +753,6 @@ class Walker {
         const moved = this.pressMoved;
         this.pointerId = null;
         this.pressMoved = false;
-        // A non-grabbable sprite was never carried; a quick double tap reacts.
         if (!this.grabbable) {
             this.tapOrReact();
             return;
@@ -789,7 +787,7 @@ class Walker {
         if (this.mode === MODE.HELD)
             this.release();
     }
-    // Stop every timer and remove the element. Layering eviction is the stage's job.
+    // Stop every timer and remove the element; layering eviction is the stage's job.
     destroy() {
         this.clearTimers();
         this.wrapEl.remove();

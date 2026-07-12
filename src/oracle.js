@@ -3,33 +3,30 @@ const { Notice } = require("obsidian");
 const { ORACLE_PATRON_FALLBACK, ORACLE_SYS_FALLBACK } = require("./registries.js");
 const { Bag, choiceRules, commaList, pick, randomInterval, tuning } = require("./toolkit.js");
 const { feedSpan } = require("./commentfeed.js");
-// Oracle: independent feed mode. Three message types (SYSTEM/ANON/VIP), generated locally. RiTa = grammar+inflection, compromise = lemmatise input, whichx = classify typed line to a VIP. Only VIP consults typing; others are ambient. Desktop-only, self-contained.
+// Oracle: independent feed mode, three message types (SYSTEM/ANON/VIP) generated locally. RiTa = grammar+inflection, compromise = lemmatise input, whichx = classify typed text to a VIP. Only VIP consults typing. Desktop-only.
 class Oracle {
     constructor(view) {
         this.view = view;
         this.plugin = view.plugin;
         this.app = view.app;
-        // Engines (lazy): whichx is Oracle's own; RiTa/compromise are read-through getters onto the shared engine (see below). A failed load latches.
+        // whichx is Oracle's own; RiTa/compromise read through to the shared engine.
         this.WhichX = null;
         this.loaded = false; this.loadFailed = false;
-        // Per-type non-repeat bags + per-VIP reaction/aside bags.
         this.sysBag = new Bag(); this.anonBag = new Bag();
         this.reactionBags = {}; this.asideBags = {};
-        // Stop-handles for the three independent source timers (filled by mount).
+        // Stop-handles for the three independent source timers.
         this.stops = [];
-        // Classifier, the enabled-VIP list it was trained against (index alignment), and the freshest typed-text match { vipIndex, symbol, ts }.
+        // Classifier, the enabled-VIP list it was trained against (index alignment), and the freshest typed-text match { vipIndex, topic, ts }.
         this.clf = null; this.enabledVips = [];
         this.context = null;
         this.editRef = null; this.editTimer = null;
         this.mounted = false;
     }
     get settings() { return this.plugin.settings; }
-    // Authored content (templates + VIPs) is owned by the plugin (loaded once, edited in settings, shared by every view), so the Oracle always reads the live model.
     get data() { return this.plugin.oracleData; }
-    // RiTa + compromise are owned by the shared RiScript engine — read through, never copied, so there's exactly one loaded instance to reason about.
     get RiTa() { return this.plugin.riscript.RiTa; }
     get nlp() { return this.plugin.riscript.nlp; }
-    // Reconcile to whether Oracle should run (oracleEnabled && live). Lazy-loads on first run; a load failure latches so we don't re-prompt every sync.
+    // Reconcile to whether Oracle should run; lazy-loads on first run, failure latches.
     async sync(want) {
         if (want) {
             if (this.loadFailed) return;
@@ -43,11 +40,10 @@ class Oracle {
             this.unmount();
         }
     }
-    // --- lazy engine load (desktop only), the Oracle sibling of riscript.ensure() ---
+    // --- lazy engine load (desktop only) ---
     async ensure() {
         if (this.loaded) return true;
         try {
-            // RiTa + compromise come off the shared engine (loaded once, reused by stream/mail; the getters above read them through); whichx is Oracle's own classifier, required on top.
             if (!(await this.plugin.riscript.ensure()))
                 throw new Error("engine unavailable");
             this.WhichX = require("../lib/whichx.js");
@@ -63,7 +59,7 @@ class Oracle {
             return false;
         }
     }
-    // Rebuild derived state after a content/setting edit: snapshot the enabled VIPs (so the classifier's labels stay index-aligned), retrain whichx on each one's lemmatised topic bank (vars.topic), and precompute the shared constant choice-rules. Cheap — safe to call on every save. A stale typed-context is dropped.
+    // Rebuild derived state after a content edit: snapshot the enabled VIPs (index-aligned classifier labels), retrain whichx on each one's lemmatised topic bank, precompute the shared constant choice-rules. Cheap — safe on every save.
     rebuild() {
         if (!this.loaded) return;
         this.reactionBags = {}; this.asideBags = {};
@@ -77,7 +73,6 @@ class Oracle {
                 if (doc.trim()) this.clf.addData("v" + i, doc);
             });
         }
-        // The line-invariant half of every template's context: the shared constant choice-rules (fixed until the next rebuild). The verb transforms + generic() are injected by the shared engine's evaluate(), so this is just the constants now.
         this.staticCtx = choiceRules(this.data.constants);
         this.context = null;
     }
@@ -85,7 +80,7 @@ class Oracle {
     mount() {
         if (this.mounted) return;
         this.mounted = true;
-        // Three independent timers — none waits on or blocks the others. SYSTEM and ANON share pushPlain (a bag-drawn template + patron vars); VIP is its own typing-aware beat.
+        // Three independent timers — none waits on or blocks the others.
         const beats = [
             ["Sys", () => this.pushPlain(this.sysBag, this.data.sysTemplates, "cc-feed-bubble-sys")],
             ["Anon", () => this.pushPlain(this.anonBag, this.data.anonTemplates, "cc-feed-bubble-anon")],
@@ -106,12 +101,12 @@ class Oracle {
     range(kind) {
         return { lo: this.settings["oracle" + kind + "MinMs"], hi: this.settings["oracle" + kind + "MaxMs"] };
     }
-    // --- helpers --- Lemmatise to root forms (lower-cased) so Symbols/typed text match across inflections.
+    // Lemmatise to lower-cased root forms so topics/typed text match across inflections.
     lemma(s) {
         try { const d = this.nlp(s); d.compute("root"); return d.text("root").toLowerCase(); }
         catch { return (s || "").toLowerCase(); }
     }
-    // Last salient typed word (>2 letters, alphabetic), base-formed by compromise pipe. Noun or gerund for $topic slot.
+    // Last salient typed word (>2 letters, alphabetic), base-formed by the compromise pipe.
     lastTyped(text, pipe) {
         try {
             const out = [];
@@ -122,16 +117,16 @@ class Oracle {
         }
         catch { return ""; }
     }
-    // A VIP's match-list: the reserved `topic` variable in its vars map (see VIP_SCHEMA). Feeds classifier training, typed-word matching, and the ambient $topic fallback.
+    // A VIP's match-list: the reserved `topic` variable in its vars map.
     syms(vip) { return (vip.vars && vip.vars.topic) || []; }
-    // Make a word read as a noun for the $topic slot: a bare verb → its gerund ("kill"→"killing", "hunt"→"hunting"), any real noun left untouched. Natural compromise tagging decides (no force-tag), so nouns like "moon" aren't verbed; the auxiliary compromise prepends ("is killing") is stripped. The single choke point for every $topic source — typed word or `topic`-bank pick alike — so verbs echo consistently wherever they live.
+    // Make a word read as a noun for the $topic slot: a bare verb → its gerund, a real noun untouched (natural tagging, no force-tag); the auxiliary compromise prepends ("is killing") is stripped. The single choke point for every $topic source.
     nounify(word) {
         const w = String(word || "").trim();
         try { const g = this.nlp(w).verbs().toGerund().out("array"); if (g.length) return g[0].replace(/^(?:is|are|am)\s+/i, ""); }
         catch { /* tagging failed - fall through to the raw word */ }
         return w;
     }
-    // One { singular, plural } patron draw from the comma-separated patron-name field. An optional custom plural comes from "Name (Plural)" brackets, else RiTa derives it; an empty field falls back to ORACLE_PATRON_FALLBACK.
+    // One { singular, plural } patron draw; "Name (Plural)" brackets give a custom plural, else RiTa derives it.
     drawPatron() {
         const pool = commaList(this.settings.oraclePatronName).map((item) => {
             const m = item.match(/^(.*?)\s*\((.+?)\)\s*$/);
@@ -141,17 +136,17 @@ class Oracle {
         return pool.length > 0 ? pick(pool)
             : { singular: ORACLE_PATRON_FALLBACK, plural: this.RiTa.pluralize(ORACLE_PATRON_FALLBACK) };
     }
-    // Evaluate one RiScript line through the shared engine (which injects fresh generic fillers + the phrase-head transforms), layering Oracle's precomputed staticCtx (shared constants) and the caller's per-line `extra` (sys/patron/topic, VIP variables) on top.
+    // Evaluate one line through the shared engine, layering staticCtx + per-line `extra`.
     evaluate(line, extra) {
         return this.plugin.riscript.evaluate(line, Object.assign({}, this.staticCtx, extra));
     }
-    // Push a finished line, guaranteeing terminal punctuation (so templates needn't all end in a period). Leaves an existing . ! ? … (incl. a trailing closing quote/bracket) untouched.
+    // Push a finished line, guaranteeing terminal punctuation.
     emit(text, cls) {
         const s = (text || "").trim();
         if (!s) return;
         this.view.feed.push(/[.!?…][)"'”’\]]?$/.test(s) ? s : s + ".", cls);
     }
-    // --- generators (the timer entry points) --- SYSTEM and ANON differ only by bag, template list, and bubble class: one bag-drawn template evaluated with the patron + sys vars. (VIP is its own typing-aware beat below.)
+    // SYSTEM and ANON differ only by bag, template list, and bubble class.
     pushPlain(bag, templates, cls) {
         const line = bag.next(templates);
         if (!line) return;
@@ -160,15 +155,15 @@ class Oracle {
     }
     pushVip() {
         if (!this.enabledVips.length) return;
-        // Beat-only: react to a fresh typed context (within the react window) if there is one, else an ambient VIP. Either way the VIP's own match-list (vars.topic) fills $topic if the context left it empty, so the echo never runs dry.
+        // React to a fresh typed context if there is one, else an ambient VIP; the VIP's own match-list fills $topic when the context left it empty.
         const ctx = this.context && Date.now() - this.context.ts <= tuning().oracleReactWindow ? this.context : null;
         const vip = (ctx && this.enabledVips[ctx.vipIndex]) || pick(this.enabledVips);
         if (!vip.reactions.length) return;
         const topic = this.nounify((ctx && ctx.topic) || pick(this.syms(vip)));
         const patron = vip.origin || this.drawPatron().singular;
-        // This VIP's variables ($verb/$manner/…) + per-line vars (frames also reach the shared constants/transforms via evaluate). Reused across sentences — evaluate never mutates it. `topic` is assigned AFTER choiceRules so the beat's chosen echo wins over the raw vars.topic choice-rule (which would otherwise re-pick per reference).
+        // `topic` is assigned AFTER choiceRules so the beat's chosen echo wins over the raw vars.topic choice-rule (which would re-pick per reference).
         const vipCtx = Object.assign(choiceRules(vip.vars), { patron, modifier: vip.modifier || vip.name, topic });
-        // Sentence 1 carries the prefix; follow-ups are bare asides (per the requested examples). Patron and modifier are already resolved plain strings, so the prefix is built in JS with the quoted modifier wrapped by feedSpan (rendered as .cc-feed-modifier); only the reaction needs the engine. They stay in vipCtx too, so a reaction that references $patron/$modifier still resolves.
+        // Sentence 1 carries the JS-built prefix (quoted modifier via feedSpan); follow-ups are bare asides. Only the reaction needs the engine.
         const reaction = this.evaluate((this.reactionBags[vip.name] ??= new Bag()).next(vip.reactions), vipCtx);
         let line = `The ${patron} ${feedSpan(`"${vipCtx.modifier}"`)} ${reaction}.`;
         if (vip.asides.length) {
@@ -186,7 +181,7 @@ class Oracle {
         if (this.editTimer != null) win.clearTimeout(this.editTimer);
         this.editTimer = win.setTimeout(() => this.classify(editor), tuning().oracleDebounce);
     }
-    // Classify the current line to a VIP; store the match only if its confidence clears a multiple of the uniform (1/N) baseline, then pick the topic to echo (see below).
+    // Classify the current line to a VIP; store the match only if its confidence clears a multiple of the uniform (1/N) baseline, then pick the topic to echo.
     classify(editor) {
         this.editTimer = null;
         if (!this.clf || !this.enabledVips.length) return;
@@ -204,7 +199,7 @@ class Oracle {
         const idx = parseInt(bestKey.slice(1), 10);
         const vip = this.enabledVips[idx];
         if (!vip) return;
-        // Echo priority: (1) typed topic-bank word, (2) most recent noun (->singular), (3) most recent verb (->infinitive). nounify() gerundises at emit. Empty -> ambient pick.
+        // Echo priority: typed topic-bank word → most recent noun → most recent verb.
         const words = new Set(lem.split(/\s+/));
         const topic = this.syms(vip).find((s) => words.has(this.lemma(s)))
             || this.lastTyped(text, (d) => d.match("#Noun").not("#Pronoun").nouns().toSingular())

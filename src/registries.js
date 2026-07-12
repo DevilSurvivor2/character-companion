@@ -1,12 +1,9 @@
 "use strict";
-// Declarative registries, schemas, seeds, and defaults — the pure-data layer every other
-// module reads. Behaviour tables whose rows call methods on a class instance live next to
-// that class instead (SIDEBAR_BUTTONS/FEED_SOURCES in companionview.js, SLOT_OCCUPANTS in
-// aesthetics.js, PILL_GRIDS in companionsettingtab.js).
+// Declarative registries, schemas, seeds, and defaults — the pure-data layer. Behaviour tables whose rows call methods on a class instance live next to that class instead.
 const DEFAULT_ORACLE = require("../default-oracle-data.json");
-// Animation registry: one row = one animation class (keyframes in styles.css); each class declares exactly ONE animation — the walker's CSS duration reader depends on it (see animations.css). role: surprise/idle (toggleable), sleep/flip/bob/tickle (playRole functions), effect (internal). directional: keyframe reads --cc-dir for L/R flip. root: false excludes bottom-of-window walkers.
+// One row = one cc-anim-<name> class in animations.css. role: surprise/idle (toggleable), sleep/flip/bob/tickle (playRole), effect (internal). directional: keyframes read --cc-dir. root:false excludes it from bottom-of-window walkers.
 const ANIMATIONS = [
-    // surprise — click reactions; grid order is this order.
+    // surprise — click reactions.
     { name: "shudder", role: "surprise" },
     { name: "glitch", role: "surprise" },
     { name: "pulse", role: "surprise", directional: true },
@@ -51,35 +48,34 @@ const ANIMATIONS = [
     { name: "wind", role: "idle", directional: true },
     { name: "breathe", role: "sleep" },
     { name: "doze", role: "sleep", directional: true },
-    // function-roles — pulled by the Walker method of the same name via playRole.
+    // function-roles — pulled by name via playRole.
     { name: "flip", role: "flip" },
     { name: "bob", role: "bob" },
     { name: "tickle", role: "tickle", directional: true },
-    // effect — internal (held-shake ladder), named directly, never pooled.
+    // effect — internal (held-shake ladder), never pooled.
     { name: "shake-small", role: "effect", directional: true },
     { name: "shake-large", role: "effect", directional: true },
 ];
 const ANIM_BY_NAME = Object.fromEntries(ANIMATIONS.map((a) => [a.name, a]));
-// Animation names grouped by role: grids draw from surprise/idle, playRole pulls the rest.
 const ANIMS_BY_ROLE = {};
 for (const a of ANIMATIONS)
     (ANIMS_BY_ROLE[a.role] ??= []).push(a.name);
-// Animation pools by role: the settings flag toggling each + the full list — the single source pairing a toggleable role with its enable map. enabledList and the settings grids read it, and FLAG_MAPS derives its animation rows from it.
+// Toggleable roles paired with their settings enable-map flag.
 const ANIM_POOLS = {
     surprise: { flag: "enabledSurprises", all: ANIMS_BY_ROLE.surprise },
     idle: { flag: "enabledIdles", all: ANIMS_BY_ROLE.idle },
 };
-// Held-fidget escalation ladder: a carried sprite climbs these "effect" shakes, one rung every N bouts (random 1..--cc-hold-wiggle-bouts), holding on the last.
+// Held-fidget escalation ladder, climbed rung by rung while carried.
 const HOLD_SHAKES = ["shake-small", "shake-large"];
 // Every anim class, cleared before a new one so they can't stack.
 const CLEARABLE = ANIMATIONS.map((a) => "cc-anim-" + a.name);
-// Per-character boolean toggles, shown as icon buttons in the editor's Name row. Add one: append a row (key, lucide icon, tooltip) — editor + loadSettings derive from it.
+// Per-character boolean toggles, shown as icon buttons in the editor's Name row.
 const CHARACTER_TOGGLES = [
     { key: "curious", icon: "goal", label: "Curious: walk toward the cursor instead of fleeing" },
     { key: "assert", icon: "crown", label: "Assert: push a resting character aside instead of yielding" },
     { key: "escape", icon: "door-open", label: "Escape: wriggle free when held still" },
 ];
-// Stream special effects: each enabled key adds a class to .cc-anchor. Numbers + descriptors live in styles.css; buildEffect reads them to inject particle/layer nodes.
+// Stream special effects: each enabled key adds a cc-fx-<key> class to the anchor; buildEffect reads its CSS descriptors to inject particle/layer nodes.
 const SPECIAL_EFFECTS = [
     { key: "retro", label: "Retro" },
     { key: "gradient", label: "Gradient" },
@@ -89,7 +85,7 @@ const SPECIAL_EFFECTS = [
     { key: "rain", label: "Rain" },
 ];
 const SPECIAL_EFFECT_KEYS = SPECIAL_EFFECTS.map((e) => e.key);
-// Stream aesthetics: in-panel livestream overlay. Each key toggles a piece — the four corner tickers plus "react", stream mode's bottom-bar occupant (see BOTTOM_OCCUPANTS). Numbers in styles.css; motion via WAAPI. Add a ticker: row + DOM in Aesthetics.build + CSS.
+// Stream-overlay pieces: the four corner tickers plus "react" (the bottom-bar occupant).
 const AESTHETICS = [
     { key: "uptime", label: "Uptime" },
     { key: "viewer", label: "Viewer" },
@@ -100,9 +96,8 @@ const AESTHETICS = [
 const AESTHETIC_KEYS = AESTHETICS.map((a) => a.key);
 // {name: bool} map over `names`, each from `src` if a boolean there, else `def`.
 const boolMap = (names, src = {}, def = true) => Object.fromEntries(names.map((n) => [n, typeof src[n] === "boolean" ? src[n] : def]));
-// A string list: keep the string items, drop everything else.
 const strList = (v) => Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
-// A {name: string[]} map (variables / constants): keep object-valued string lists, drop empties. Each name becomes a RiScript choice rule the templates can reference as $name.
+// {name: string[]} map (variables / constants): keep string lists, drop empties.
 const strMap = (v) => {
     const out = {};
     if (v && typeof v === "object" && !Array.isArray(v))
@@ -112,51 +107,47 @@ const strMap = (v) => {
         }
     return out;
 };
-// Scalar coercers for schema rows (siblings of strList/strMap): `str` keeps a string else "". `bool(def)`/`num(def)` are factories returning a coercer that keeps a boolean/number else the given default.
 const str = (v) => typeof v === "string" ? v : "";
 const bool = (def) => (v) => typeof v === "boolean" ? v : def;
 const num = (def) => (v) => typeof v === "number" ? v : def;
-// Per-list-item schemas: rows of { key, coerce }, coerce validates a loaded value or returns the default (coerce(undefined) → default). Single source for both load (coerceItem) and create (newItem), so a field is one row. `id` is implicit.
+// Per-list-item schemas: rows of { key, coerce }; coerce(undefined) yields the default. One source for both load (coerceItem) and create (newItem). `id` is implicit.
 const CHARACTER_SCHEMA = [
     { key: "name", coerce: str },
     { key: "spritePath", coerce: str },
     { key: "quotes", coerce: strList },
     { key: "walkSpeedPct", coerce: num(100) },
     { key: "rootEnabled", coerce: bool(false) },
-    // Default on so existing vaults keep every character in the sidebar bag.
     { key: "sidebarEnabled", coerce: bool(true) },
-    // Stream template vars. Pronouns: slash-sep -> $they/$them/$their. Epithet/role: comma-sep -> $epithet/$role. Deeds/topics: verb-initial phrases for $deed.ing()/.ed()/.s(). All optional; streamCtx() provides safe defaults.
+    // Stream template vars; all optional, streamCtx() provides safe defaults.
     { key: "epithet", coerce: str },
     { key: "role", coerce: str },
     { key: "pronouns", coerce: str },
     { key: "deeds", coerce: strList },
     { key: "topics", coerce: strList },
-    // Per-character toggles (curious/assert/escape …), defaulted off, from the registry.
     ...CHARACTER_TOGGLES.map((t) => ({ key: t.key, coerce: bool(false) })),
 ];
 const COMMENT_SET_SCHEMA = [
     { key: "name", coerce: str },
     { key: "comments", coerce: strList },
     { key: "enabled", coerce: bool(true) },
-    // Per-set variables {name: [...]} — each a $name choice rule usable in this set's comments ($time greetings, $hype, any custom var). Per-set scope: only this set's lines see them.
+    // Per-set variables {name: [...]} — $name choice rules visible only to this set's lines.
     { key: "vars", coerce: strMap },
 ];
-// Oracle VIP (named patron). Lives in oracle-data.json. Reserved var 'topic' = VIP's match-list: feeds classifier training + typed-word matching + $topic fallback. Other vars keys are $name choice pools.
+// Oracle VIP (named patron). The reserved var 'topic' is the VIP's match-list: it feeds classifier training, typed-word matching, and the ambient $topic fallback.
 const VIP_SCHEMA = [
-    // Identifier + pill label (e.g. "Artemis"); also the future reference handle.
     { key: "name", coerce: str },
-    // In-feed epithet shown in quotes (e.g. "Pure Moonlight Hunter"); falls back to name.
+    // In-feed epithet shown in quotes; falls back to name.
     { key: "modifier", coerce: str },
-    // Optional patron origin word ("constellation"); empty → random from the pool.
+    // Optional patron origin word; empty → random from the pool.
     { key: "origin", coerce: str },
     { key: "enabled", coerce: bool(true) },
-    // Output: sentence-1 frames ("$verb.s() $manner" or a plain "roars with approval") and standalone follow-ups. Both are RiScript — they may reference this VIP's variables, the shared constants, $topic, and transforms (.s/.ed/.ing).
+    // RiScript: sentence-1 frames + standalone follow-ups.
     { key: "reactions", coerce: strList },
     { key: "asides", coerce: strList },
-    // Per-VIP variables {name: [...]} — each usable as $name (a random pick) inside frames. The reserved key `topic` doubles as the VIP's match-list (see above); it never needs an explicit $topic reference since the echo injects that per beat.
+    // Per-VIP variables {name: [...]}, usable as $name inside frames.
     { key: "vars", coerce: strMap },
 ];
-// Mail template: Title/From/To/Content are RiScript lines, evaluated against streamCtx() + shared mail constants. Lives in mail-data.json. 'name' is admin-only pill label.
+// Mail template: Title/From/To/Content are RiScript lines. 'name' is the admin pill label.
 const MAIL_SCHEMA = [
     { key: "name", coerce: str },
     { key: "title", coerce: str },
@@ -165,14 +156,14 @@ const MAIL_SCHEMA = [
     { key: "content", coerce: str },
     { key: "enabled", coerce: bool(true) },
 ];
-// Program: a scheduled full-panel "broadcast". Lives in program-data.json. 'label' is the admin-only pill label. 'background' is a plain stream-bg-style image field (comma-separated paths/emojis or a folder; drawn once per airing, no swap, no RiScript) — it fades in over the sprite and backdrop on the anchor's cover layer (the universal hijack transition). 'content' is a RiScript, multi-line script shown one line at a time as a bottom-bar bubble (BOTTOM_OCCUPANTS); the airing ENDS when the last line's hold elapses. 'schedule' is the airing slider's raw value: 0 = off, 1..59 = that minute past every hour (while the panel is live), 60 = the ":00" step — the top of the hour, stored as 60 so it can't collide with off. The scheduler matches `schedule % 60` against the clock minute.
+// Program: a scheduled full-panel broadcast. 'background' is a plain stream-bg-style image field (no RiScript, drawn once per airing); 'content' is a multi-line RiScript script. 'schedule': 0 = off, 1..59 = that minute past every hour, 60 = the ":00" step (stored as 60 so it can't collide with off; the scheduler matches `schedule % 60`).
 const PROGRAM_SCHEMA = [
     { key: "label", coerce: str },
     { key: "background", coerce: str },
     { key: "content", coerce: str },
     { key: "schedule", coerce: num(0) },
 ];
-// Normalise a loaded object to exactly its schema fields (drop unknowns), keep/mint its id. newItem is the inverse: a fresh item from the same defaults, with optional overrides.
+// Normalise a loaded object to exactly its schema fields (drop unknowns), keep/mint its id.
 function coerceItem(schema, raw) {
     const out = { id: typeof raw.id === "string" ? raw.id : genId() };
     for (const f of schema)
@@ -185,9 +176,9 @@ function newItem(schema, overrides) {
         out[f.key] = f.coerce(undefined);
     return Object.assign(out, overrides);
 }
-// A shaped data-file object is "empty" when it holds no list content (every array value is empty). The first-run seed trigger — non-list values (activeCharacterId, the constants maps) don't count, so a file that only carries constants still seeds its lists.
+// First-run seed trigger: a shaped file is "empty" when every array value is empty (non-list values like activeCharacterId or constants don't count).
 const shapeIsEmpty = (o) => Object.values(o).every((v) => !Array.isArray(v) || v.length === 0);
-// Shipped starter content for first-run seeding. Bulky defaults are authored in default-*.json and bundled into main.js by the build, not inlined here.
+// Shipped starter content for first-run seeding.
 const SEED_CHARACTERS = {
     activeCharacterId: "seed-hero",
     characters: [
@@ -209,7 +200,6 @@ const SEED_CHARACTERS = {
         },
     ],
 };
-// Sample comment set exercising all stream vars.
 const SEED_STREAM = {
     commentSets: [{
         id: "seed-sample", name: "Sample", enabled: true,
@@ -274,7 +264,7 @@ const SEED_PROGRAM = {
         content: "We interrupt your evening for a special bulletin.\nReports place $name near [downtown | the harbor] tonight.\nMore on this story as it develops. Back to you.",
     }],
 };
-// Sibling data files (kept out of data.json). One row per file drives generic load/save. Fields: prop (plugin field); file (sibling filename); shape (raw)=>in-memory object; create (write when genuinely MISSING, never on corrupt); seed (starter content on first run — small defaults inline, bulky via default-*.json); afterSave (side effects: char save -> repaint views+stage; Oracle save -> retrain classifiers).
+// Sibling data files (kept out of data.json); one row drives the generic load/save. Fields: prop (plugin field), file, shape (raw)=>in-memory object, create (write when genuinely MISSING, never on corrupt), seed (first-run content), afterSave (side effects).
 const DATA_FILES = [
     {
         prop: "characterData", file: "character-data.json", create: true, seed: () => SEED_CHARACTERS,
@@ -287,7 +277,6 @@ const DATA_FILES = [
                 activeId = characters.length > 0 ? characters[0].id : null;
             return { characters, activeCharacterId: activeId };
         },
-        // The shown sprite (or its enabled set) may have changed → the shared reconcile, full-render when asked.
         afterSave: (p, rerender) => p.applyChange(rerender),
     },
     {
@@ -298,7 +287,7 @@ const DATA_FILES = [
         },
     },
     {
-        // Seed ships as default-oracle-data.json — a BUILD input (esbuild's json loader bundles it into main.js), authored as its own file only for editability; it is never read at runtime.
+        // Seed ships as default-oracle-data.json, bundled into main.js at build time.
         prop: "oracleData", file: "oracle-data.json", create: false,
         seed: () => DEFAULT_ORACLE,
         shape: (raw) => {
@@ -307,7 +296,6 @@ const DATA_FILES = [
                 sysTemplates: strList(raw.sysTemplates),
                 anonTemplates: strList(raw.anonTemplates),
                 vips: (Array.isArray(raw.vips) ? raw.vips : []).map((v) => coerceItem(VIP_SCHEMA, v)),
-                // Shared, troupe-wide choice pools any template can reference as $name.
                 constants: strMap(raw.constants),
             };
         },
@@ -324,7 +312,7 @@ const DATA_FILES = [
         },
     },
     {
-        // Blog has no per-item list (no pills / ListEditor): just a flat line-list of raw microblog strings + a shared constants map. Each line is parsed at push time (see pushBlog) — no schema table needed.
+        // Blog is a flat line list + constants map — no per-item schema.
         prop: "blogData", file: "blog-data.json", create: false, seed: () => SEED_BLOG,
         shape: (raw) => {
             raw = raw || {};
@@ -335,7 +323,7 @@ const DATA_FILES = [
         },
     },
     {
-        // News mirrors blog's file shape (flat headline list + constants map); unlike blog its lines also see the character context (see newsCtx). One pool for both news faces (feed beat / chyron).
+        // News mirrors blog's shape; one pool serves both news faces (feed beat / chyron).
         prop: "newsData", file: "news-data.json", create: false, seed: () => SEED_NEWS,
         shape: (raw) => {
             raw = raw || {};
@@ -346,7 +334,7 @@ const DATA_FILES = [
         },
     },
     {
-        // Program is a scheduled backdrop takeover, not a feed source: a pill-edited list of programs (PROGRAM_SCHEMA), each with its own airing minute. afterSave runs the shared light reconcile, which re-times every open panel's airing check in place (a schedule edit must reach the scheduler).
+        // afterSave reconciles the open panels so a schedule edit reaches the scheduler.
         prop: "programData", file: "program-data.json", create: false, seed: () => SEED_PROGRAM,
         shape: (raw) => {
             raw = raw || {};
@@ -356,35 +344,33 @@ const DATA_FILES = [
     },
 ];
 const DATA_FILE_BY_PROP = Object.fromEntries(DATA_FILES.map((d) => [d.prop, d]));
+// data.json holds only scalars + the enable maps; bulky content lives in the DATA_FILES.
 const DEFAULT_SETTINGS = {
-    // Characters (the bulky array) + the active-character pointer live in character-data.json, not here — see the DATA_FILES table. data.json holds only the light "bones": scalars + the animation/effect/aesthetic enable maps.
     sidebarSpriteMaxHeight: 300,
     rootSpriteMaxHeight: 150,
     rootWalkSpeed: 20,
     quoteDurationMs: 3000,
-    quoteTypewriter: "off",   // "off": whole line at once; "slow"/"fast": reveal sentence-by-sentence, typewriter-style, at the matching --cc-quote-type-speed-* gap
+    quoteTypewriter: "off",   // "off" | "slow" | "fast"
     surpriseChance: 20,
     animateOnQuote: true,
     idleEnabled: true,
     chatterChance: 25,
     sleepAfterMs: 120000,
-    // ---- stream mode (sidebar panel) ----
+    // ---- stream mode ---- Every feed source's interval pair follows the `<key>MinMs`/`<key>MaxMs` convention (stored ms, drawn at random in [min, max]).
     streamEnabled: false,
-    // Vault paths or emojis (like a character's sprite field), cycled at a random interval (ms). Seeded with 🌃 so a fresh install has a backdrop the moment stream mode is toggled on.
+    // Vault paths or emojis, cycled at a random interval.
     streamBackgrounds: "🌃",
     streamBgMinMs: 600000,
     streamBgMaxMs: 1200000,
-    // Stored ms between comment bubbles, picked at random in [min, max]. (Every feed source's interval pair follows the `<key>MinMs`/`<key>MaxMs` convention — loadSettings migrates the old streamComment* names.)
     streamMinMs: 10000,
     streamMaxMs: 20000,
     // Comment bubbles kept on screen before the oldest drops.
     streamHistoryCount: 6,
-    // ---- Oracle mode (sidebar panel) ---- A second feed mode: three message types (SYSTEM / ANON / VIP) generated locally with RiTa + compromise + whichx. Bulky content lives in oracle-data.json; only scalars here.
+    // ---- Oracle mode ----
     oracleEnabled: false,
-    // The two configurable name tokens. Patron is a pool: comma-separated, each optionally "Name (Plural)" — drawn at random per message. Blank falls back to ORACLE_SYS_FALLBACK / ORACLE_PATRON_FALLBACK (also the settings placeholders — one source for both).
+    // Patron is a comma-separated pool, each optionally "Name (Plural)"; blank falls back to ORACLE_SYS_FALLBACK / ORACLE_PATRON_FALLBACK (also the settings placeholders).
     oracleSystemName: "",
     oraclePatronName: "",
-    // Independent interval ranges per type (authored seconds, stored ms; like streamComment).
     oracleSysMinMs: 20000,
     oracleSysMaxMs: 45000,
     oracleAnonMinMs: 15000,
@@ -393,30 +379,30 @@ const DEFAULT_SETTINGS = {
     oracleVipMaxMs: 25000,
     // VIP beats consult what you're typing when fresh; off = always ambient topics.
     oracleVipReactsToTyping: true,
-    // ---- Mail mode (sidebar panel) ---- A third feed source: one randomly-drawn Title/From/To/Content template, RiScript-filled, on its own interval. Bulky content (templates + constants) lives in mail-data.json.
+    // ---- Mail mode ----
     mailEnabled: false,
     mailMinMs: 900000, // 15 min
     mailMaxMs: 2400000, // 40 min
-    // ---- Blog mode (sidebar panel) ---- A fourth feed source: microblog posts (@handle / body / #tags) drawn one per beat on a random interval in [min, max], RiScript-filled against blog-data.json's constants. A post with no @handle gets a randomly generated one; content is pure-ambient (never references the shown character). Bulky content lives in blog-data.json.
+    // ---- Blog mode ----
     blogEnabled: false,
     blogMinMs: 60000, // 1 min
     blogMaxMs: 180000, // 3 min
-    // ---- News mode (sidebar panel) ---- A fifth feed source: one-line headlines RiScript-filled against the shown character's context + news-data.json's constants (the mail recipe on the blog shape). One beat timer (a standard feed-source interval), two mutually exclusive faces: the bottom-bar chyron (default; each beat cues one pass — see BOTTOM_OCCUPANTS) or single comment-feed bubbles. Bulky content lives in news-data.json.
+    // ---- News mode ----
     newsEnabled: false,
     newsMinMs: 120000, // 2 min
     newsMaxMs: 360000, // 6 min
-    // The face switch. Off (default): each news beat cues a chyron pass. On: each beat pushes a headline into the comment feed instead, and the chyron stands down.
+    // Face switch: off = each news beat cues a chyron pass; on = feed bubbles instead.
     newsToFeed: false,
-    // ---- Miscellaneous (stream overlay fonts + gift emojis) ---- CSS font-family strings (used verbatim), empty = keep the styles.css defaults.
+    // ---- Miscellaneous ---- CSS font-family strings, empty = keep the styles.css defaults.
     commentFont: "",       // overrides --cc-stream-font on the comment feed bubbles
     giftEmojiFont: "",     // font-family for the rained gift emojis
-    // Whitespace/newline-separated emojis the gift button rains; each token is one gift option. Empty = a single 🎁. Stored as raw text (multi-line for easier organising); split on whitespace at spawn time.
+    // Whitespace-separated emojis the gift button rains; empty = a single 🎁.
     giftEmojis: "",
 };
-// Oracle name fallbacks: what $system and the patron pool resolve to when the field is left blank. One source, reused as the settings placeholders so the hint always matches the actual fallback.
+// Oracle name fallbacks, doubling as the settings placeholders.
 const ORACLE_SYS_FALLBACK = "Star Stream";
 const ORACLE_PATRON_FALLBACK = "Constellation";
-// The enable maps (flag-per-name): [settings key, names, default]. One row drives both the defaults (filled into DEFAULT_SETTINGS below) and loadSettings' re-normalisation — keep known flags, default any newly added name to the row's default. The animation rows spread from ANIM_POOLS so the role↔flag pairing lives in one place. Effects start OFF (each is an opt-in overlay); the rest ON.
+// The enable maps: [settings key, names, default]. One row drives both the defaults and loadSettings' re-normalisation (keep known flags, default newly added names).
 const FLAG_MAPS = [
     ...Object.values(ANIM_POOLS).map((p) => [p.flag, p.all, true]),
     ["enabledEffects", SPECIAL_EFFECT_KEYS, false],

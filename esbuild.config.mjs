@@ -4,14 +4,10 @@ import fs from "fs";
 
 const prod = process.argv[2] === "production";
 
-// RiTa is a global-style browser script (it defines a global `RiTa` instead of
-// exporting itself). Bundling it as a module breaks that, so we prepend it verbatim —
-// but wrapped in a function so its 1.5 MB parses/executes on the FIRST ENGINE USE, not
-// at plugin load (V8 only pre-parses an uncalled function body, which keeps Obsidian's
-// startup fast). RiScriptEngine.ensure() calls __ccLoadRita() when a feed mode needs it.
-// The wrapper must stay the first thing in the output file: rita's tail assigns the bare
-// global `RiTa = ...`, which only works while the file is sloppy-mode — with the banner
-// first, the bundle's later "use strict" is a plain statement, not a directive.
+// RiTa (a global-assigning browser script) is prepended wrapped in a function, so its
+// 1.5 MB parses/runs on first engine use (__ccLoadRita), not at plugin load. The wrapper
+// must stay FIRST in the output: rita's tail assigns the bare global `RiTa =`, which needs
+// sloppy mode — with the banner first, the bundle's "use strict" is no longer a directive.
 const ritaGlobal = fs.readFileSync("lib/rita.min.js", "utf8");
 const ritaLazy = `var __ccLoadRita = function () {
 ${ritaGlobal}
@@ -19,18 +15,16 @@ ${ritaGlobal}
 };
 `;
 
-// styles.css is likewise a build artifact: a plain byte-for-byte concatenation of the
-// src/styles/ parts in this order (no CSS parser touches it, so the tuning comments and
-// custom-property values ship exactly as authored). Edit the parts, never root styles.css.
+// styles.css is a byte-for-byte concatenation of these parts, in this order.
 const STYLE_PARTS = [
-  "tuning.css",     // the :root behavioural-constants block tuning() reads
-  "panel.css",      // sidebar panel shell: cc-root, icon column, anchor + backdrop
-  "effects.css",    // stream special effects (cc-fx-*)
-  "sprite.css",     // sprite wrap, root-stage walker, speech bubble, vertical model
-  "settings.css",   // pills, tab bar, range sliders, textareas
-  "feed.css",       // comment-feed overlay + per-mode bubble styles
-  "animations.css", // one block per animation: its class line + its keyframes
-  "aesthetics.css", // stream overlay tickers, bottom-bar slot, particles
+  "tuning.css",
+  "panel.css",
+  "effects.css",
+  "sprite.css",
+  "settings.css",
+  "feed.css",
+  "animations.css",
+  "aesthetics.css",
 ];
 function buildStyles() {
   const banner = "/* GENERATED FILE — built from src/styles/ by esbuild.config.mjs. Edit the parts there, never this file. */\n\n";
@@ -43,8 +37,7 @@ const ctx = await esbuild.context({
   bundle: true,
   external: ["obsidian", "electron", "@codemirror/*", "@lezer/*"],
   format: "cjs",
-  // minAppVersion 1.4.0 ships Electron 25 (Chrome 114), so es2022 is safe — keeps
-  // ??=/?. native instead of transpiled.
+  // minAppVersion 1.4.0 ships Electron 25 (Chrome 114), so es2022 is safe.
   target: "es2022",
   platform: "browser",
   banner: { js: ritaLazy },

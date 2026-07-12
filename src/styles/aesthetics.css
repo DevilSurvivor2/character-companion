@@ -59,7 +59,7 @@
     white-space: nowrap;
 }
 
-/* Universal hijack transition — every takeover fades through this one recipe: a hijacker (chyron pass, program airing) fades in over what it replaces (react bar, sprite + backdrop) and fades back out when done. cc-hijack carries the transition; cc-hijack-hidden fades to nothing (visibility waits out the fade so a hidden react bar can't be clicked, but snaps back instantly on reveal). The program's scene cover restates the same recipe in panel.css (a pseudo-element can't take these classes). */
+/* Universal hijack transition — every takeover fades through this one recipe. cc-hijack carries the transition; cc-hijack-hidden fades to nothing (visibility waits out the fade so a hidden react bar can't be clicked, but snaps back instantly on reveal). The program's scene cover restates the recipe in panel.css. */
 .cc-hijack {
     transition: opacity var(--cc-hijack-fade) ease, visibility 0s;
 }
@@ -69,7 +69,7 @@
     transition: opacity var(--cc-hijack-fade) ease, visibility 0s var(--cc-hijack-fade);
 }
 
-/* Bottom bar: one grid cell every occupant stacks in (see BOTTOM_OCCUPANTS in aesthetics.js). Exactly one shows at a time; handovers crossfade in place via the hijack classes above. */
+/* Bottom bar: one grid cell every occupant stacks in (see BOTTOM_OCCUPANTS); exactly one shows at a time, handovers crossfade in place. */
 .cc-aes-bottom {
     position: absolute;
     inset-inline: 16px;
@@ -140,7 +140,7 @@
     height: 24px;
 }
 
-/* Chyron occupant: one clipped line of headlines; WAAPI scrolls the track right-to-left, only the box lives here. It holds the bar only for the pass itself — in and out ride the hijack fade (which also delays the scroll, so the bar is fully in before the strip moves). */
+/* Chyron occupant: one clipped line of headlines; WAAPI scrolls the track, only the box lives here. */
 .cc-aes-chyron {
     overflow: hidden;
     padding: 2px 8px;

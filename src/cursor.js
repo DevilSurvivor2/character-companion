@@ -1,6 +1,6 @@
 "use strict";
 const { tuning } = require("./toolkit.js");
-// Shared window-cursor tracker: latest pointer position (x = -1 outside the window) plus the tickle detector (quick horizontal reversals of a free cursor). Self-contained.
+// Shared window-cursor tracker: latest pointer position (x = -1 outside the window) plus the tickle detector (quick horizontal reversals of a free cursor).
 class Cursor {
     constructor(onTickle) {
         this.x = -1;

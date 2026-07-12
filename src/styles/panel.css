@@ -93,7 +93,7 @@
     filter: blur(1px);
 }
 
-/* Program mode hijacks the scene: the airing's held image fades in crisp (no stream blur) on this cover layer ABOVE the sprite and the backdrop dressing — the sprite never moves, it's simply covered, and the cover blocks its pointer events for the duration. The fade is the universal hijack transition (cc-hijack's recipe, restated because a pseudo-element can't take the classes); --cc-program-bg keeps its last image (paintBackground never clears it) so the fade-out still shows the airing. Foreground effects (rain/snow/frame), the aesthetics overlay, and the icon column sit higher and keep playing over it. */
+/* Program cover layer: the airing's image fades in crisp ABOVE the sprite and backdrop, blocking their pointer events. The fade restates the universal hijack recipe (a pseudo-element can't take the cc-hijack classes); --cc-program-bg keeps its last image so the fade-out still shows the airing. Effects and overlays sit higher. */
 .cc-anchor::after {
     content: "";
     position: absolute;

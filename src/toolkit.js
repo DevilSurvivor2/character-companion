@@ -1,12 +1,7 @@
 "use strict";
-// Shared free functions: random draws, the timer primitives, CSS tuning access, sprite-path
-// resolution, and text utilities. Surface-agnostic — nothing in here may know about a
-// specific class; state rides on arguments, never on module state.
-// Main-window scoped: the plugin never runs in popout windows, so everything here addresses
-// the plugin's own `window`/`document` (or an element's own .win/.doc), never the focused
-// `activeWindow`/`activeDocument` — a popout holding focus must not redirect a mount or a measure.
+// Shared free functions, surface-agnostic by rule. Main-window scoped: everything here addresses the plugin's own `window`/`document` (or an element's .win/.doc), never the focused `activeWindow`/`activeDocument` — the plugin doesn't run in popouts.
 const { TFile, TFolder } = require("obsidian");
-// Comma-separated inline text (e.g. "Trickster, Rascal") → a trimmed, non-empty string list.
+// Comma-separated text → trimmed, non-empty string list.
 const commaList = (v) => (v || "").split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 // Fisher-Yates shuffle in place; returns the same array.
 function shuffle(arr) {
@@ -20,28 +15,27 @@ function shuffle(arr) {
 function randRange(lo, hi) {
     return lo + Math.random() * (hi - lo);
 }
-// Uniform random integer in [lo, hi] inclusive (hi floored up to lo, so a reversed range yields lo).
+// Uniform random integer in [lo, hi] inclusive (a reversed range yields lo).
 function randInt(lo, hi) {
     return lo + Math.floor(Math.random() * (Math.max(lo, hi) - lo + 1));
 }
-// One random element of an array (or one random char of a string — both index by .length), or "" when empty. The shared "pick one" primitive behind every random draw.
+// One random element of an array (or char of a string), or "" when empty.
 function pick(a) {
     return a && a.length ? a[Math.floor(Math.random() * a.length)] : "";
 }
-// A run of n chars drawn independently from pool (a string). Shared by the $num/$let/$mix filler expansion and the blog handle's digit suffix, so "a random digit run" is one implementation.
+// A run of n chars drawn independently from pool (a string).
 function randStr(pool, n) {
     let out = "";
     for (let i = 0; i < n; i++) out += pick(pool);
     return out;
 }
-// Seconds → "HH:MM:SS" (zero-padded), for the stream uptime ticker.
+// Seconds → "HH:MM:SS".
 function formatHMS(totalS) {
     const s = Math.max(0, Math.floor(totalS));
     const p = (n) => String(n).padStart(2, "0");
     return `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`;
 }
-// Self-rescheduling random timer: waits randRange(lo, hi) ms, fires fn(), repeats. range() is read every cycle so live setting edits apply (hi floored to lo). Returns a stop() handle. The one primitive behind the comment feed and the stream-background cycle.
-// `win` is the OWNING window (el.win), captured once by the caller — never `activeWindow` read per call: timer ids are per-window, so a set/clear pair split across two windows would never cancel and the interval would run forever.
+// Self-rescheduling random timer: waits randRange(lo, hi) ms, fires fn(), repeats; range() is re-read every cycle so live setting edits apply. Returns a stop() handle. `win` must be the OWNING window, captured once — timer ids don't cross windows.
 function randomInterval(win, range, fn) {
     let timer = null;
     const tick = () => {
@@ -51,7 +45,7 @@ function randomInterval(win, range, fn) {
     tick();
     return () => { if (timer != null) win.clearTimeout(timer); };
 }
-// Reconcile a named self-rescheduling timer to on/off (idempotent — a live timer is left alone). The stop handle lives at host[handle]; range() yields {lo,hi}, fire() runs one tick. The one on/off gate for every randomInterval owner (view feed sources / background cycle, aesthetics tickers).
+// Reconcile a named randomInterval at host[handle] to on/off (idempotent — a live timer is left alone).
 function reconcileTimer(host, win, handle, on, range, fire) {
     if (on === (host[handle] != null))
         return;
@@ -62,28 +56,27 @@ function reconcileTimer(host, win, handle, on, range, fire) {
         host[handle] = null;
     }
 }
-// Resolve a vault-relative path (or bare unique filename) to an image URL, or null. `app` is threaded in from a Component caller — never the discouraged global, and never `this.app`: these are free functions, so under "use strict" `this` is undefined here.
+// Resolve a vault-relative path (or bare unique filename) to an image URL, or null.
 function resolveSpriteUrl(app, path) {
     let file = app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile))
         file = app.metadataCache.getFirstLinkpathDest(path, "");
     return file instanceof TFile ? app.vault.getResourcePath(file) : null;
 }
-// Image extensions recognised when a path points at a folder.
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"]);
 const isEmoji = (s) => /^\p{Extended_Pictographic}/u.test(s);
 
-// Emoji -> inline SVG image URL. width/height = intrinsic size (must be large; sprite capped by max-height, never upscaled). font-size vs viewBox: oversized past the box so ink reaches edges.
+// Emoji -> inline SVG image URL. Intrinsic size must be large (the sprite is capped by max-height, never upscaled); font-size oversized past the viewBox so ink reaches edges.
 function emojiUrl(ch) {
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100"><text x="50" y="45" font-size="101" text-anchor="middle" dominant-baseline="central">${ch}</text></svg>`;
     return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
-// A path field → resolvable image URLs. Comma tells the two forms apart: no comma = a single folder path (every image inside); else comma-separated file paths. An emoji token in either form resolves to an emoji sprite.
+// A path field → resolvable image URLs: no comma = a single folder path (every image inside), else comma-separated file paths; emoji tokens resolve to emoji sprites.
 function resolvePathList(app, paths) {
     const raw = (paths || "").trim();
     if (!raw)
         return [];
-    // No comma = a single folder path (every image inside); an emoji or file path isn't a folder, so it falls through to the split branch below, which resolves the lone token.
+    // A lone non-folder token falls through to the split branch below.
     if (!raw.includes(",")) {
         const folder = app.vault.getAbstractFileByPath(raw);
         if (folder instanceof TFolder) {
@@ -97,7 +90,7 @@ function resolvePathList(app, paths) {
         .map((p) => isEmoji(p) ? emojiUrl(p) : resolveSpriteUrl(app, p))
         .filter((u) => u !== null);
 }
-// Stable identity for a bag item: an object by its id (falling back to its JSON), anything else by string value. Drives both the reshuffle signature and the don't-repeat-the-last-draw check, so object items (rebuilt fresh on every pool call) compare by value, never by reference.
+// Stable identity for a bag item — object items are rebuilt per pool call, so they must compare by value (id / JSON), never by reference.
 const bagKey = (item) => item && typeof item === "object" ? (item.id ?? JSON.stringify(item)) : String(item);
 // Non-repeating random picker: draws every item once before repeating; reshuffles when the queue empties or the source list changes.
 class Bag {
@@ -110,7 +103,6 @@ class Bag {
         if (!items || items.length === 0)
             return null;
         const signature = items.map(bagKey).join("\u0000");
-        // Reshuffle on a list change or an empty queue; else keep draining.
         if (signature !== this.signature || this.queue.length === 0) {
             this.signature = signature;
             this.queue = shuffle(items.slice());
@@ -123,15 +115,14 @@ class Bag {
         return drawn;
     }
 }
-// All behavioural numbers live in styles.css as custom properties (the single source of truth); this reads them. Times are authored in ms; callers divide by 1000 for seconds.
 let _tuning = null;
-// tuning() returns a Proxy: t.fooBar resolves --cc-foo-bar (camelCase->kebab), cached on first read. CSS-only edit — no JS mirror to keep in sync.
+// Reader over the --cc-* behavioural numbers in styles.css: t.fooBar resolves --cc-foo-bar, cached on first read. Times are ms; callers ÷1000 for seconds.
 function tuning() {
     if (_tuning)
         return _tuning;
     const cs = window.getComputedStyle(document.documentElement);
     const read = (k) => parseFloat(cs.getPropertyValue("--cc-" + k.replace(/([A-Z])/g, "-$1").toLowerCase()));
-    // A hot reload can run this before styles.css is applied (every var reads NaN). Probe one known var; until styles land, hand back a live (uncached) reader so the next call re-reads once they do.
+    // Before styles.css lands (hot reload) every var reads NaN: hand back an uncached reader so a later call re-reads once styles apply.
     if (isNaN(read("ease")))
         return new Proxy({}, { get: (_t, k) => (typeof k === "string" ? read(k) : undefined) });
     const cache = {};
@@ -146,7 +137,7 @@ function tuning() {
     });
     return _tuning;
 }
-// Build an effect from --cc-fx-<key>-* CSS descriptors (-count N, -rand n lo hi per-particle CSS vars, -steps lo hi, -wander dLo dHi xr yr sLo sHi, -layers N). Returns teardown function.
+// Build an effect from --cc-fx-<key>-* CSS descriptors (-count N, -rand n lo hi per-particle CSS vars, -steps lo hi, -wander dLo dHi xr yr sLo sHi, -layers N). Returns a teardown.
 function buildEffect(anchor, key) {
     const cs = anchor.win.getComputedStyle(anchor);
     const prop = (suffix) => cs.getPropertyValue("--cc-fx-" + key + "-" + suffix).trim();
@@ -160,7 +151,7 @@ function buildEffect(anchor, key) {
     const wander = floats(prop("wander")); // [dLo, dHi, xr, yr, sLo, sHi]
     const nodes = [];
     const anims = [];
-    // Optional WAAPI random walk — a unique waypoint count per particle. Travel is % of the anchor, resolved to px at build time.
+    // Optional WAAPI random walk; travel is % of the anchor, resolved to px at build time.
     const startWander = (el) => {
         if (steps.length < 2 || wander.length < 6)
             return;
@@ -191,7 +182,6 @@ function buildEffect(anchor, key) {
     // Singleton overlay layers, each styled individually. NaN when undeclared → skipped.
     for (let i = 0, n = parseInt(prop("layers"), 10); i < n; i++)
         nodes.push(anchor.createDiv({ cls: "cc-fx-layer cc-fx-" + key + "-layer cc-fx-" + key + "-layer-" + i }));
-    // Teardown (effects rebuild fresh on refocus, so this suffices).
     return () => {
         for (const a of anims)
             a.cancel();
@@ -199,22 +189,19 @@ function buildEffect(anchor, key) {
             n.remove();
     };
 }
-// Run fn as soon as styles.css has landed (tuning() resolves a real number), retrying on rAF until then. Every surface that reads --cc-* numbers at build time (panel render, stage mount) waits behind this, or a hot reload builds it unstyled and it animates into place as the rules arrive.
+// Run fn as soon as styles.css has landed (tuning() resolves a real number), retrying on rAF until then — surfaces that read --cc-* numbers at build time wait behind this.
 function whenStyled(fn) {
     if (!isNaN(tuning().ease)) {
         fn();
         return;
     }
-    // `window`, not `activeWindow`: a bare one-shot poll with nothing to cancel, and obsidianmd/prefer-window-timers wants timer calls addressed to `window`.
     window.requestAnimationFrame(() => whenStyled(fn));
 }
-// True only while the MAIN window is foreground and focused — when the loops should run.
-// Deliberately the plugin's own `document`, not `activeDocument`: a focused popout counts
-// as away (the plugin doesn't run in popouts), so everything pauses while one holds focus.
+// True only while the MAIN window is foreground and focused (a focused popout counts as away — the plugin doesn't run in popouts).
 function appActive() {
     return document.visibilityState !== "hidden" && document.hasFocus();
 }
-// Best-effort pointer capture (throws if unavailable/already released); swallow so every grab/drag site stays a one-liner.
+// Best-effort pointer capture/release (throws if unavailable/already released).
 function capturePointer(el, id) {
     try {
         el.setPointerCapture(id);
@@ -227,7 +214,7 @@ function releasePointer(el, id) {
     }
     catch { /* already released — fine */ }
 }
-// Fraction (0–1 of natural height) of transparent rows atop a sprite — the gap from image top down to the first coloured pixel. Measured once per URL on an off-screen canvas (vault sprites are same-origin app:// resources, so untainted) and cached (holds the pending Promise while measuring, then the number); blank/unreadable resolves 0. A walker scales it by rendered height to lift the bubble onto the artwork, not the empty box top.
+// Fraction (0–1 of natural height) of transparent rows atop a sprite, measured once per URL on an off-screen canvas and cached (the pending Promise while measuring, then the number); blank/unreadable resolves 0. Lifts the bubble onto the artwork, not the box top.
 const _spriteInsetCache = new Map();
 function spriteTopInsetFraction(url) {
     if (!url)
@@ -247,7 +234,7 @@ function spriteTopInsetFraction(url) {
                 const ctx = canvas.getContext("2d", { willReadFrequently: true });
                 ctx.drawImage(img, 0, 0);
                 const data = ctx.getImageData(0, 0, w, h).data;
-                // `|| 0` guards a pre-styles NaN read: without it every `alpha > NaN` is false, every row reads transparent, and frac would be a pathological 1. Threshold 0 (first row with any non-zero alpha) is a sane fallback.
+                // `|| 0` guards a pre-styles NaN read (alpha > NaN is always false).
                 const minAlpha = (tuning().bubbleInsetAlpha || 0) * 255;
                 let row = 0;
                 for (; row < h; row++) {
@@ -270,7 +257,7 @@ function spriteTopInsetFraction(url) {
     _spriteInsetCache.set(url, p);
     return p;
 }
-// How long a fully-revealed bubble of `text` holds, scaled to its content so short lines clear sooner and long (wrapped) ones linger. `budget` (quoteDurationMs) is spent over exactly one full line: chars-per-full-line = bubble max-width ÷ avg glyph width (--cc-quote-char-em × the bubble's own font-size, so it tracks max-width and theme scale), and the per-char rate falls out as budget ÷ that. Floored at --cc-quote-hold-min so a one-word burst still registers. The one staying-time rule, shared by the walker's speech bubble and the program's bottom-bar bubble.
+// Bubble staying time, scaled to content: `budget` (quoteDurationMs) is spent over exactly one full line (bubble max-width ÷ avg glyph width), floored at --cc-quote-hold-min.
 function bubbleHoldMs(bubbleEl, budget, text) {
     const T = tuning();
     const fontPx = parseFloat(bubbleEl.win.getComputedStyle(bubbleEl).fontSize) || 13;
@@ -278,7 +265,7 @@ function bubbleHoldMs(bubbleEl, budget, text) {
     const perChar = budget / charsPerLine;
     return Math.max(T.quoteHoldMin, perChar * text.length);
 }
-// Split a quote into the sentences a walker reveals as consecutive bubbles (quoteTypewriter only). Scans runs of terminators and closes a sentence only where terminatorBreaks says so. A merge pass folds runs shorter than --cc-quote-min-words words together, so a burst like "Whoa! Whoa! Whoa!" reads as one. Pure/static: unit-testable headless (pass an explicit min via mergeShortSentences).
+// Split a quote into the sentences the typewriter reveals as consecutive bubbles: close a sentence where terminatorBreaks says so, then merge runs shorter than --cc-quote-min-words.
 function splitQuote(text) {
     const s = (text || "").replace(/\.{2,}/g, "…").trim();
     if (!s)
@@ -290,7 +277,7 @@ function splitQuote(text) {
     while ((m = re.exec(s))) {
         const end = m.index + m[0].length;
         if (terminatorBreaks(s, m.index, m[0], end)) {
-            // Keep a closing quote/bracket sitting right on the terminator with its own sentence, so "hi." doesn't strand the " onto the next bubble.
+            // Keep a closing quote/bracket on the terminator with its own sentence.
             let e = end;
             while (e < s.length && /['"”’»)\]]/.test(s[e])) e++;
             frags.push(s.slice(start, e).trim());
@@ -303,7 +290,7 @@ function splitQuote(text) {
     }
     return mergeShortSentences(frags, tuning().quoteMinWords);
 }
-// Does the terminator run `run` at [i, end) close the current sentence? ! and ? always do. An ellipsis closes only as a *trailing* mark before a capitalised word. A lone period closes unless it is an abbreviation: an internal dot ("3.5", "google.com"), a known honorific ("Dr.", "Mr."), or an internal initialism dot ("U.S."). Sentence-ending initialisms ("U.F.O.") are allowed to break if followed by a new sentence.
+// Does the terminator run at [i, end) close the current sentence? ! ? always; an ellipsis only as a trailing mark before a capital; a period unless it's an abbreviation (internal dot, honorific, or initialism dot).
 function terminatorBreaks(s, i, run, end) {
     if (/[!?]/.test(run)) {
         let j = end;
@@ -335,7 +322,7 @@ function terminatorBreaks(s, i, run, end) {
     }
     return true;
 }
-// Fold fragments shorter than `min` words forward into the next, so no bubble is a stray one- or two-word burst; a leftover short tail attaches to the previous fragment. Exception: a fragment that trails off with a sentence-final … ("Hey…") is a deliberate beat, not a stray burst, so it always flushes on its own even when short.
+// Fold fragments shorter than `min` words forward into the next; a leftover short tail attaches to the previous fragment. A sentence-final … always flushes on its own.
 function mergeShortSentences(frags, min) {
     const out = [];
     let buf = "";
@@ -350,7 +337,7 @@ function mergeShortSentences(frags, min) {
         out.length ? (out[out.length - 1] += " " + buf) : out.push(buf);
     return out;
 }
-// {name: [...]} → {name: "[a | b | c]"} RiScript choice rules (skipping empties). One single-item list stays a literal "[a]", which RiScript handles fine. Shared by Oracle (constants / VIP variables) and stream (per-set variables + the $deed/$topic character lists).
+// {name: [...]} → {name: "[a | b | c]"} RiScript choice rules (skipping empties).
 function choiceRules(map) {
     const out = {};
     for (const k of Object.keys(map || {})) {

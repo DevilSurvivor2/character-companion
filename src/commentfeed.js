@@ -1,8 +1,7 @@
 "use strict";
-// Inline-span protocol: carries "this run is a styled <span>" through the plain-string pipeline (RiScript eval + emit's punctuation pass), which is why it's control chars in the text rather than a {cls,text} node — a wrapped run is FEED_SPAN cls FEED_SPAN_SEP text FEED_SPAN, both chars non-whitespace so emit's trim/regex leave them intact. feedSpan is the single producer, renderInline the single consumer; plain text splits to one verbatim run. Only the Oracle VIP beat wraps a run today (its quoted modifier).
+// Inline-span protocol: control chars carry "this run is a styled <span>" through the plain-string pipeline (RiScript eval + emit's punctuation pass). A wrapped run is FEED_SPAN cls FEED_SPAN_SEP text FEED_SPAN; feedSpan produces, renderInline consumes.
 const FEED_SPAN = String.fromCharCode(0x1f);      // toggles a plain ↔ span run
 const FEED_SPAN_SEP = String.fromCharCode(0x1e);  // separates a run's class from its text
-// Wrap text so renderInline emits it inline as <span class=cls>; cls defaults to the emphasis modifier style.
 function feedSpan(text, cls = "cc-feed-modifier") {
     return FEED_SPAN + cls + FEED_SPAN_SEP + text + FEED_SPAN;
 }
@@ -14,14 +13,14 @@ function renderInline(el, text) {
         el.createSpan({ cls: seg.slice(0, sep), text: seg.slice(sep + 1) });
     });
 }
-// Split a news headline on its one authored structural token: an optional leading [SECTION] label (the bracketed group may hold spaces), the rest is the body. Only that leading group is structural — a later [a | b] stays an ordinary RiScript choice in the body — so the parse mirrors pushBlog's author/tags split. Shared by the feed beat (which styles the section) and the chyron (body only, section dropped). Returns { section, body }; section "" when the line has no leading bracket group.
+// Split a news headline into { section, body } on its optional leading [SECTION] label. Only the leading group is structural — a later [a | b] stays a RiScript choice.
 function parseNewsLine(raw) {
     const m = /^\s*\[([^\]]*)\]\s*/.exec(raw || "");
     return m
         ? { section: m[1].trim(), body: raw.slice(m[0].length).trim() }
         : { section: "", body: (raw || "").trim() };
 }
-// Chat overlay: fixed element pinned to root-split corner nearest the panel. Owns no timer/content — exposes push() for independent sources. Newest at corner, older bump away.
+// Chat overlay pinned to the root-split corner nearest the panel. Owns no timer/content — exposes push() for independent sources. Newest at corner, older bump away.
 class CommentFeed {
     constructor(view) {
         this.view = view;
@@ -29,7 +28,7 @@ class CommentFeed {
         this.el = null;
     }
     get settings() { return this.plugin.settings; }
-    // The feed exists only while a source wants it; torn down (not preserved) when the panel goes away, rebuilt fresh on return. It lives on the PANEL'S own <body> (never `activeDocument` — a focused popout must not adopt it; in practice always the main window, since the panel isn't live elsewhere).
+    // Exists only while a source wants it; torn down when the panel goes away, rebuilt on return. Lives on the panel's own <body>.
     mount() {
         if (this.el)
             return;
@@ -37,7 +36,7 @@ class CommentFeed {
         this.applyFont();
         this.reposition();
     }
-    // Override the shared --cc-stream-font on the bubbles when the user set a comment font (verbatim CSS font-family); empty clears back to the styles.css default. Bubbles inherit the property from the feed root. Applied on mount and re-run by every sync(), so a font edit lands live.
+    // Override --cc-stream-font on the bubbles when a comment font is set; empty clears back to the styles.css default. Re-run by every sync() so a font edit lands live.
     applyFont() {
         if (this.el)
             this.el.setCssProps({ "--cc-stream-font": this.settings.commentFont || "" });
@@ -48,11 +47,10 @@ class CommentFeed {
             this.el = null;
         }
     }
-    // Pin the overlay to the root-split corner nearest the panel (left/right by the panel's side, top/bottom by its half); the stacking direction follows.
+    // Pin the overlay to the root-split corner nearest the panel; stacking direction follows.
     reposition() {
         if (!this.el)
             return;
-        // All geometry in the panel's own window, matching the body the feed is mounted on.
         const { doc, win } = this.view.contentEl;
         const root = doc.querySelector(".workspace-split.mod-root");
         const rect = (root ?? doc.body).getBoundingClientRect();
@@ -86,7 +84,7 @@ class CommentFeed {
         }
         if (extraCls)
             bubble.classList.add(extraCls);
-        // createDiv appends; for a top anchor the newest belongs at the front.
+        // For a top anchor the newest belongs at the front.
         if (top)
             this.el.prepend(bubble);
         // Reflow so the entry transition runs from its hidden start state.

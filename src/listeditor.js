@@ -1,7 +1,7 @@
 "use strict";
 const { Menu, Setting } = require("obsidian");
 const { capturePointer, releasePointer, tuning } = require("./toolkit.js");
-// Reusable name-pill list + editor (pill grid with click-to-select + drag-reorder, Add button, per-item editor). cfg: { items, makeItem, labelOf, addText, pickName, pickDesc, emptyText, renderBody, onMutate, save, onAdd?, onDelete? }.
+// Reusable name-pill list + editor (click-to-select + drag-reorder pills, Add button, per-item editor). cfg: { items, makeItem, labelOf, addText, pickName, pickDesc, emptyText, renderBody, onMutate, save, onAdd?, onDelete? }.
 class ListEditor {
     constructor(tab, cfg) {
         this.tab = tab;
@@ -10,7 +10,7 @@ class ListEditor {
         this.gridEl = null;
         this.editorEl = null;
         this.pillEls = new Map();
-        // Pointer-drag reorder state: the dragged pill, its pointer, the press origin (for the drag threshold), and whether it has passed it.
+        // Pointer-drag reorder state.
         this.reorderPill = null;
         this.reorderPointerId = null;
         this.reorderStartX = 0;
@@ -60,7 +60,7 @@ class ListEditor {
             this.pillEls.set(it.id, pill);
         }
     }
-    // Create a pill button. A click that concluded a reorder drag is swallowed so the dragged pill isn't also selected.
+    // Create a pill button; a click that concluded a reorder drag is swallowed.
     createPill(grid, text, active, onClick) {
         const pill = grid.createEl("button", { cls: "cc-pill", text });
         if (active)
@@ -74,14 +74,14 @@ class ListEditor {
         });
         return pill;
     }
-    // Make an edit pill a drag handle that reorders the list: it slides through the grid in the DOM as it's dragged (live layout IS the preview); on drop we read DOM order back.
+    // Make a pill a drag handle that reorders the list: it slides through the grid in the DOM as it's dragged (live layout IS the preview); on drop the DOM order is read back.
     makeReorderable(pill, id) {
         pill.dataset.ccId = id;
         pill.addEventListener("pointerdown", (e) => this.onReorderDown(pill, e));
         pill.addEventListener("pointermove", (e) => this.onReorderMove(e));
         pill.addEventListener("pointerup", (e) => this.onReorderUp(e));
         pill.addEventListener("pointercancel", (e) => this.onReorderUp(e));
-        // Right-click a pill to delete its item (the only delete path — there's no in-editor delete button).
+        // Right-click a pill to delete its item — the only delete path.
         pill.addEventListener("contextmenu", (e) => {
             e.preventDefault();
             const menu = new Menu();
@@ -108,7 +108,7 @@ class ListEditor {
             this.reorderMoved = true;
             this.reorderPill.classList.add("cc-pill-dragging");
         }
-        // Find the pill under the pointer (hiding the dragged pill from the hit test for the lookup), then move the dragged pill to its near/far side — the grid reflows.
+        // Find the pill under the pointer (hiding the dragged pill from the hit test), then move the dragged pill to its near/far side — the grid reflows.
         this.reorderPill.classList.add("cc-no-hit");
         const under = this.gridEl.doc.elementFromPoint(e.clientX, e.clientY);
         this.reorderPill.classList.remove("cc-no-hit");
@@ -162,7 +162,7 @@ class ListEditor {
         else
             host.createDiv({ cls: "cc-empty", text: this.cfg.emptyText });
     }
-    // Remove an item (the pill right-click menu routes here — the only delete path): drop it, let the owner patch up dependent state, persist, refresh dependent UI, rebuild.
+    // Remove an item: drop it, let the owner patch up dependent state, persist, rebuild.
     async deleteItem(id) {
         const items = this.cfg.items();
         const i = items.findIndex((c) => c.id === id);

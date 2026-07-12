@@ -41,24 +41,24 @@
     --cc-tickle-reversals: 4;
     --cc-ease: 180ms;
  
-    /* Vertical model: at rest a sprite sits --cc-rest-down (3% of its height) below the floor, hiding the knee-crop. Upward motion is capped at this value (translateY: -3%); more travel dips first (positive translateY) and rises back. */
+    /* Vertical model: at rest a sprite sits --cc-rest-down below the floor, hiding the knee-crop. Upward motion is capped at this value; more travel dips first. */
     --cc-rest-down: 3%;
     --cc-walk-rest-y: 3;   /* walk arc: rest, 3% below floor */
     --cc-walk-lift-y: 0;   /* walk arc: peak, level with the floor */
 
-    /* Speech bubble anchoring: float the bubble above the sprite's top-most coloured pixel rather than the empty image-box top. --cc-bubble-gap is the float distance as a unitless FRACTION of the surface's sprite max-height, so root and sidebar (different heights) get a proportional gap instead of one fixed px looking huge on the short one. --cc-bubble-inset is the measured transparent-top height in rendered px (set per-walker by JS; 0 until measured). A row counts as coloured once any pixel's alpha exceeds --cc-bubble-inset-alpha (0–1). */
+    /* Bubble anchoring: --cc-bubble-gap is a fraction of the surface's sprite max-height; --cc-bubble-inset is the measured transparent-top height in px (set per-walker by JS). A row counts as coloured once any pixel's alpha exceeds --cc-bubble-inset-alpha. */
     --cc-bubble-gap: 0.1;
     --cc-bubble-inset-alpha: 0.05;
     --cc-bubble-max-width: 220;   /* px cap on bubble width (both surfaces); also the "full line" reference JS scales the hold time against */
 
-    /* Quote typewriter (quoteTypewriter "slow"/"fast"): the bubble types its line out one char at a time, then holds for the quote-duration setting before the next sentence. --cc-quote-type-speed-slow / -fast are the two selectable per-char gaps (the setting picks one; "off" skips typing entirely); after punctuation whichever is chosen lengthens — end marks (. ! ? and a sentence-final …) pause --cc-quote-pause-end, mid marks (, — and a mid-sentence …) pause half that. A line is split into sentences first; runs shorter than --cc-quote-min-words words merge so no bubble is a lone one-word burst. */
+    /* Quote typewriter: the two selectable per-char gaps; punctuation adds the pause vars (end marks the full pause, mid marks half). Sentences shorter than min-words merge. */
     --cc-quote-type-speed-slow: 45ms;
     --cc-quote-type-speed-fast: 16ms;
     --cc-quote-pause-mid: 180ms;
     --cc-quote-pause-end: 360ms;
     --cc-quote-min-words: 3;
 
-    /* Bubble hold time scales with content length rather than being flat: the quote-duration SETTING is spent over exactly one full line, so a line filling --cc-bubble-max-width holds for it, shorter lines clear sooner, and a wrapped multi-line line lingers proportionally longer. --cc-quote-char-em (avg glyph width as a fraction of font-size) turns the pixel width into a chars-per-full-line count; --cc-quote-hold-min is the floor so a one-word burst still registers. */
+    /* Bubble hold time scales with content: the quote-duration setting is spent over one full line; --cc-quote-char-em (avg glyph width / font-size) turns bubble width into a chars-per-line count, --cc-quote-hold-min is the floor. */
     --cc-quote-char-em: 0.5;
     --cc-quote-hold-min: 1400ms;
 
@@ -106,14 +106,12 @@
     --cc-blog-handle-digit-max: 3;       /* most trailing digits */
     --cc-blog-handle-max-len: 7;         /* max characters per handle word */
 
-    /* Universal hijack transition: the ONE fade every takeover uses, in and out — a chyron pass or program bubble over the react bar, a program airing's cover over the scene. Also the chyron scroll's start delay, so the bar is fully in before the strip moves. */
+    /* Universal hijack transition: the ONE fade every takeover uses, in and out. Also the chyron scroll's start delay, so the bar is fully in before the strip moves. */
     --cc-hijack-fade: 200ms;
 
-    /* News mode (headline feed OR bottom-bar chyron — one face at a time). The chyron owns no cadence: every pass is cued by a news feed beat (the newsMinMs/newsMaxMs setting), so no interval var lives here. */
-    --cc-news-chyron-max: 3;        /* MAX headlines joined per chyron pass; each pass picks a random count 1..max */
-    --cc-news-chyron-speed: 55;     /* scroll speed, px per second (a longer strip takes proportionally longer) */
-
-    /* Program mode (scheduled broadcast). The airing lasts as long as its content takes to play — each line holds for the shared quote staying time (--cc-quote-* / quoteDurationMs) — so it needs no duration knob of its own. */
+    /* News chyron (cadence comes from the news interval setting, not here). */
+    --cc-news-chyron-max: 3;        /* max headlines per pass; each pass rolls 1..max */
+    --cc-news-chyron-speed: 55;     /* scroll speed, px per second */
 
     /* Shared font for stream text (feed bubbles, tickers, comment box). */
     --cc-stream-font: "Arial", "Inter", "Segoe UI";

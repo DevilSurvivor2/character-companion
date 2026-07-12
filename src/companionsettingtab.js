@@ -3,7 +3,7 @@ const { PluginSettingTab, Setting, setIcon } = require("obsidian");
 const { AESTHETICS, ANIM_BY_NAME, ANIM_POOLS, CHARACTER_SCHEMA, CHARACTER_TOGGLES, COMMENT_SET_SCHEMA, MAIL_SCHEMA, ORACLE_PATRON_FALLBACK, ORACLE_SYS_FALLBACK, PROGRAM_SCHEMA, SPECIAL_EFFECTS, VIP_SCHEMA, newItem } = require("./registries.js");
 const { capturePointer, releasePointer } = require("./toolkit.js");
 const { ListEditor } = require("./listeditor.js");
-// Enable-pill grids: one row each. entries(t) builds pills; save(t) overrides default saveSettings for per-file lists.
+// Enable-pill grids: entries(t) builds pills; save(t) overrides the default saveSettings for per-file lists.
 const PILL_GRIDS = {
     root: {
         grid: "rootGridEl", empty: "No characters yet. Add one in the Cast tab.",
@@ -24,14 +24,14 @@ const PILL_GRIDS = {
     vip: {
         grid: "vipGridEl", empty: "No patrons yet. Add one in the VIP tab.",
         entries: (t) => t.enablePills(t.plugin.oracleData.vips),
-        save: (t) => t.plugin.saveDataFile("oracleData"), // the oracle-data save retrains every open view's classifier
+        save: (t) => t.plugin.saveDataFile("oracleData"),
     },
     mail: {
         grid: "mailGridEl", empty: "No mail templates yet. Add one in the Inbox tab.",
         entries: (t) => t.enablePills(t.plugin.mailData.mailTemplates),
         save: (t) => t.plugin.saveDataFile("mailData"),
     },
-    // Effects + aesthetics: no empty state, no explicit save. Their flag maps live in data.json, so the default saveSettings persists them — and that repaints the open panels' stream overlay IN PLACE (effects rebuild just the toggled fx; aesthetics through the overlay's own sync), never tearing down the sprite's rest cycle.
+    // Effects + aesthetics: no empty state, no explicit save — their flag maps live in data.json, so the default saveSettings persists and repaints in place.
     effect: {
         grid: "effectGridEl",
         entries: (t) => t.flagPills(SPECIAL_EFFECTS, t.plugin.settings.enabledEffects),
@@ -41,22 +41,18 @@ const PILL_GRIDS = {
         entries: (t) => t.flagPills(AESTHETICS, t.plugin.settings.enabledAesthetics),
     },
 };
-// A slider/range labelled in a time unit ("sec"/"min") edits an ms-STORED setting. ONE
-// convention for both helpers: the <input> runs in the stored unit (ms) — min/max/step are
-// authored in the readable unit and scaled to ms bounds through this map, and only the
-// readout divides back for display. Any other unit ("%", "px") is label-only (factor 1).
+// A slider/range labelled "sec"/"min" edits an ms-STORED setting: the <input> runs in ms, min/max/step are authored in the readable unit and scaled through this map, and only the readout divides back. Any other unit ("%", "px") is label-only (factor 1).
 const MS_PER_UNIT = { sec: 1000, min: 60000 };
-// The settings tab: a tab bar over pages, each page a row in the tab table (this.tabs) below.
+// The settings tab: a tab bar over pages, one row per page in this.tabs.
 class CompanionSettingTab extends PluginSettingTab {
     constructor(app, plugin) {
         super(app, plugin);
         this.plugin = plugin;
         this.activeTab = "behavior";
         this.bodyEl = null;
-        // Paint-grid references — one field per PILL_GRIDS row, assigned on mount (mountPillGrid) and rebuilt live; the isConnected guard makes a cross-tab rebuild harmless while a grid is off-screen.
+        // Pill-grid host references, one field per PILL_GRIDS row.
         for (const g of Object.values(PILL_GRIDS))
             this[g.grid] = null;
-        // The two name-pill lists. Character edits reflect into the display + sidebar pills; comment sets stand alone.
         this.charEditor = new ListEditor(this, {
             pickName: "Pick a character to edit",
             pickDesc: "Click a name below to edit it, drag to reorder. Right-click to delete.",
@@ -87,7 +83,6 @@ class CompanionSettingTab extends PluginSettingTab {
             onMutate: () => this.rebuildPillGrid("commentSet"),
             renderBody: (host, cs, ed) => this.renderCommentSetBody(host, cs, ed),
         });
-        // The Oracle VIP list is backed by oracle-data.json, so it overrides `save` to persist there (which also re-trains every open view's classifier) instead of into data.json.
         this.vipEditor = new ListEditor(this, {
             pickName: "Pick a patron to edit",
             pickDesc: "Click a name below to edit it, drag to reorder. Right-click to delete.",
@@ -100,7 +95,6 @@ class CompanionSettingTab extends PluginSettingTab {
             onMutate: () => this.rebuildPillGrid("vip"),
             renderBody: (host, v, ed) => this.renderVipBody(host, v, ed),
         });
-        // The mail template list is backed by mail-data.json, same as the VIP list is backed by oracle-data.json — save persists there, not into data.json.
         this.mailEditor = new ListEditor(this, {
             pickName: "Pick a mail template to edit",
             pickDesc: "Click a name below to edit it, drag to reorder. Right-click to delete.",
@@ -113,7 +107,7 @@ class CompanionSettingTab extends PluginSettingTab {
             onMutate: () => this.rebuildPillGrid("mail"),
             renderBody: (host, m, ed) => this.renderMailBody(host, m, ed),
         });
-        // The program list is backed by program-data.json. Unlike mail there's no enable pill grid — a program self-gates on its own schedule (0 = off) — so onMutate has nothing to rebuild; the file's afterSave reconciles the scheduler.
+        // No enable pill grid — a program self-gates on its own schedule (0 = off) — so onMutate has nothing to rebuild.
         this.programEditor = new ListEditor(this, {
             pickName: "Pick a program to edit",
             pickDesc: "Click a name below to edit it, drag to reorder. Right-click to delete.",
@@ -126,7 +120,7 @@ class CompanionSettingTab extends PluginSettingTab {
             onMutate: () => { },
             renderBody: (host, p, ed) => this.renderProgramBody(host, p, ed),
         });
-        // Tab table — the single source for both the tab bar (display) and the body dispatch (renderBody); add a page = add a row. An `icon` marks a list-editor page (Character/Comment/Patron/Inbox): the tab bar renders it icon-only, expanding to icon+label only while active (see display()).
+        // Tab table — one source for the tab bar and the body dispatch. An `icon` marks a list-editor page: rendered icon-only, expanding to icon+label while active.
         this.tabs = [
             { id: "behavior", label: "Behavior", render: (c) => this.renderBehaviorTab(c) },
             { id: "character", label: "Cast", icon: "user-round", render: (c) => this.renderCastTab(c) },
@@ -142,11 +136,11 @@ class CompanionSettingTab extends PluginSettingTab {
             { id: "program", label: "Program", icon: "tv", render: (c) => this.renderProgramTab(c) },
         ];
     }
-    // The shared persist tail every control's onChange ends in: the field's own save() when given (per-file lists persist to their own file), else the settings save with the control's rerender flag.
+    // The shared persist tail every control's onChange ends in: the field's own save() when given, else the settings save with the control's rerender flag.
     commit(save, rerender = false) {
         return save ? save() : this.plugin.saveSettings(rerender);
     }
-    // One slider setting: a native ".slider" over [min, max] stepped by step, with the live value shown to its LEFT (mirrors the dual-range row) and the unit carried in the name's brackets. The value is read/written through get()/set(), or `key` names a plugin-settings scalar directly. Same convention as addRangeSetting: the slider runs in the STORED unit — a "sec"/"min" unit means ms (MS_PER_UNIT), so min/max/step are authored in the display unit and scaled to ms here, and only the readout divides back. format/parse remap a non-numeric stored value onto the slider scale (the typewriter's string↔index map); readout overrides the display.
+    // One slider setting, live value to its left. The value goes through get()/set(), or `key` names a plugin-settings scalar. The slider runs in the STORED unit (see MS_PER_UNIT); format/parse remap a non-numeric stored value onto the slider scale, readout overrides the display.
     addSliderSetting(container, { name, desc, unit, key, get, set, min, max, step = 1, save, rerender = false, format = (v) => v, parse = (v) => v, readout }) {
         const div = MS_PER_UNIT[unit] ?? 1;
         get = get ?? (() => this.plugin.settings[key]);
@@ -162,11 +156,11 @@ class CompanionSettingTab extends PluginSettingTab {
         const paint = () => label.setText(readout(Number(slider.value)));
         slider.value = String(format(get()));
         paint();
-        // Live-paint the readout per tick; persist (and possibly re-render the open panel) only when the drag ends — same rationale as addTextSetting's change-not-keystroke commit.
+        // Live-paint per tick; persist only when the drag ends.
         slider.addEventListener("input", () => paint());
         slider.addEventListener("change", async () => { set(parse(Number(slider.value))); await this.commit(save, rerender); });
     }
-    // One toggle setting: a boolean read through get()/set() (or `key` naming a plugin-settings flag), persisted on flip.
+    // One toggle setting, persisted on flip.
     addToggleSetting(container, { name, desc, key, get, set, save, rerender = false }) {
         get = get ?? (() => this.plugin.settings[key]);
         set = set ?? ((v) => (this.plugin.settings[key] = v));
@@ -180,7 +174,7 @@ class CompanionSettingTab extends PluginSettingTab {
             await this.commit(save, rerender);
         }));
     }
-    // One text-input setting: a string read through get()/set() and persisted. set() owns any trimming and side effects (a pill relabel, a pill-grid rebuild); `configure(setting)` may decorate the row before the input lands (the character Name row adds its toggle icons). Commits on the native "change" (click away / Enter), NOT per keystroke — a save can re-render the open panel, which mustn't fire mid-typing.
+    // One text-input setting. set() owns any trimming and side effects; configure(setting) may decorate the row before the input lands. Commits on the native "change", NOT per keystroke — a save can re-render the open panel, which mustn't fire mid-typing.
     addTextSetting(container, { name, desc, placeholder, key, get, set, save, rerender = false, configure }) {
         get = get ?? (() => this.plugin.settings[key]);
         set = set ?? ((v) => (this.plugin.settings[key] = v));
@@ -199,7 +193,7 @@ class CompanionSettingTab extends PluginSettingTab {
             });
         });
     }
-    // A dual-thumb range setting: two native ".slider" inputs stacked (both full-width, pointer ignored except on each thumb). The pair is read/written through getMin/setMin/getMax/setMax, or `minKey`/`maxKey` name two plugin-settings scalars directly. A "sec"/"min" unit means the stored pair is ms (MS_PER_UNIT): min/max/step are authored in the display unit and scaled to ms bounds here — the slider steps and commits in ms, only the readout divides back.
+    // A dual-thumb range setting: two stacked sliders, pointer ignored except on each thumb. Same stored-unit convention as addSliderSetting.
     addRangeSetting(container, { name, desc, min, max, step = 1, unit, minKey, maxKey, getMin, setMin, getMax, setMax }) {
         const div = MS_PER_UNIT[unit] ?? 1;
         const s = this.plugin.settings;
@@ -221,7 +215,7 @@ class CompanionSettingTab extends PluginSettingTab {
         const paint = () => {
             label.setText((Number(lo.value) / div) + "–" + (Number(hi.value) / div));
         };
-        // Clamp the dragged thumb against the other so they never cross, commit the value, repaint live; persist once on release ("change"), like the single slider.
+        // Clamp the dragged thumb against the other so they never cross; persist on release.
         const onInput = (self, other, isLo, commit) => () => {
             let v = Number(self.value);
             const limit = Number(other.value);
@@ -236,7 +230,7 @@ class CompanionSettingTab extends PluginSettingTab {
         hi.addEventListener("change", persist);
         paint();
     }
-    // The one textarea scaffold: raw text by default (value stored verbatim — gift emojis, mail bodies); the `format`/`parse` overrides below turn it into the line-list and map flavours.
+    // The one textarea scaffold: raw text by default; format/parse turn it into the line-list and map flavours below.
     addTextarea(container, { get, set, save, rows = 8, format = (v) => v, parse = (v) => v }) {
         const area = container.createEl("textarea", { cls: "cc-textarea" });
         area.value = format(get());
@@ -246,14 +240,14 @@ class CompanionSettingTab extends PluginSettingTab {
             await this.commit(save);
         });
     }
-    // A bulk line-list textarea: one trimmed item per non-blank line. Shared by the character-quotes, comment-set, and Oracle editors.
+    // A bulk line-list textarea: one trimmed item per non-blank line.
     addBulkTextarea(container, opts) {
         this.addTextarea(container, Object.assign({
             format: (list) => list.join("\n"),
             parse: (v) => v.split("\n").map((s) => s.trim()).filter((s) => s.length > 0),
         }, opts));
     }
-    // A {name: [...]} map editor: one "name: a, b, c" line per variable/constant, comma-separated values. Backs the Oracle/mail constants and per-set/per-VIP variables.
+    // A {name: [...]} map editor: one "name: a, b, c" line per variable/constant.
     addMapTextarea(container, opts) {
         this.addTextarea(container, Object.assign({
             format: (obj) => Object.keys(obj || {}).map((k) => k + ": " + obj[k].join(", ")).join("\n"),
@@ -270,7 +264,7 @@ class CompanionSettingTab extends PluginSettingTab {
             },
         }, opts));
     }
-    // The shared "Message variety → Constants" section closing the Oracle/mail/blog tabs: a heading + a map textarea over that mode's constants map. Only the desc phrasing is per-mode.
+    // The shared "Message variety → Constants" section closing a feed mode's tab.
     addConstantsSection(container, opts) {
         new Setting(container).setName("Message variety").setHeading();
         new Setting(container).setName("Constants").setDesc(opts.desc);
@@ -282,7 +276,6 @@ class CompanionSettingTab extends PluginSettingTab {
         const bar = containerEl.createDiv({ cls: "cc-tabbar" });
         for (const tab of this.tabs) {
             const btn = bar.createEl("button", { cls: "cc-tab" });
-            // Iconed (list-editor) tabs show the icon always and the label only while active — CSS collapses the label; text-only tabs just carry the label.
             if (tab.icon) {
                 btn.classList.add("cc-tab-iconed");
                 setIcon(btn.createSpan({ cls: "cc-tab-icon" }), tab.icon);
@@ -305,7 +298,7 @@ class CompanionSettingTab extends PluginSettingTab {
         c.empty();
         this.tabs.find((t) => t.id === this.activeTab)?.render(c);
     }
-    // A muted one-line intro at the top of a tab, above its first heading — one flat sentence saying what the tab is for.
+    // A muted one-line intro at the top of a tab.
     tabIntro(container, text) {
         container.createDiv({ cls: "cc-tab-intro", text });
     }
@@ -366,7 +359,7 @@ class CompanionSettingTab extends PluginSettingTab {
             unit: "sec", min: 1, max: 5,
             key: "quoteDurationMs",
         });
-        // Off / Slow / Fast three-step slider. Stored as the "off"/"slow"/"fast" string; the slider works in 0–2 indices, so format/parse map the string↔index and readout shows the label.
+        // Three-step slider over the stored "off"/"slow"/"fast" string: format/parse map string↔index, readout shows the label.
         const typewriterSteps = ["off", "slow", "fast"];
         const typewriterLabels = ["Off", "Slow", "Fast"];
         this.addSliderSetting(c, {
@@ -487,7 +480,7 @@ class CompanionSettingTab extends PluginSettingTab {
             placeholder: ORACLE_PATRON_FALLBACK,
             key: "oraclePatronName",
         });
-        // Three fully independent interval ranges (authored seconds, stored ms).
+        // Three independent interval ranges.
         const interval = (name, kind) => this.addRangeSetting(c, {
             name, desc: "A new message of this type appears after a random time in this range.",
             unit: "sec", min: 5, max: 180, step: 5,
@@ -534,7 +527,7 @@ class CompanionSettingTab extends PluginSettingTab {
         new Setting(c).setName("Patron list").setHeading();
         this.vipEditor.mount(c);
     }
-    // Per-VIP editor body: name (+ type), its variables (choice pools — the reserved `topic` bank is its typed-match list), and reaction / aside lines. All persist to oracle-data.json. Enabling and deleting are done from the patron pills (Oracle tab) and pill right-click.
+    // Per-VIP editor body; all fields persist to oracle-data.json.
     renderVipBody(containerEl, vip, editor) {
         const box = containerEl.createDiv({ cls: "cc-settings-box" });
         const save = () => this.plugin.saveDataFile("oracleData");
@@ -574,7 +567,6 @@ class CompanionSettingTab extends PluginSettingTab {
             .setDesc("One aside per line. Render = \"The Patron's reaction + The Patron's follow-up comments\".");
         this.addBulkTextarea(box, { get: () => vip.asides, set: (lines) => (vip.asides = lines), save });
     }
-    // Mail mode's settings: the interval, which templates are enabled, and the shared constants any template can draw from. The templates themselves are edited on the Inbox tab.
     renderMailTab(c) {
         this.tabIntro(c, "The period emailing that directly address the character.");
         new Setting(c).setName("Mail mode").setHeading();
@@ -599,7 +591,6 @@ class CompanionSettingTab extends PluginSettingTab {
         new Setting(c).setName("Mail list").setHeading();
         this.mailEditor.mount(c);
     }
-    // Blog mode's settings: the interval range, the flat microblog list (one post per line, no pills), and the shared constants any post can draw from. The list + constants persist to blog-data.json; the interval is a data.json scalar.
     renderBlogTab(c) {
         this.tabIntro(c, "The ambient microblogging that never mentions the character.");
         new Setting(c).setName("Blog mode").setHeading();
@@ -625,7 +616,6 @@ class CompanionSettingTab extends PluginSettingTab {
             save: () => this.plugin.saveDataFile("blogData"),
         });
     }
-    // News mode's settings: the shared interval range (one cadence for whichever face runs), the face switch (chyron vs feed), the flat headline list (one per line, no pills — blog's tab shape), and the shared constants any headline can draw from. Unlike blog, the lines also see the character vars (mail's context); both faces draw from the same list. The list + constants persist to news-data.json; the interval + switch are data.json scalars.
     renderNewsTab(c) {
         this.tabIntro(c, "The rolling news that reports on the character.");
         new Setting(c).setName("News mode").setHeading();
@@ -656,7 +646,7 @@ class CompanionSettingTab extends PluginSettingTab {
             save: () => this.plugin.saveDataFile("newsData"),
         });
     }
-    // Per-template editor body: an admin-only name (pill label, never shown in-feed), then the four RiScript fields actually drawn into the feed. All persist to mail-data.json.
+    // Per-mail-template editor body; all fields persist to mail-data.json.
     renderMailBody(containerEl, mail, editor) {
         const box = containerEl.createDiv({ cls: "cc-settings-box" });
         const save = () => this.plugin.saveDataFile("mailData");
@@ -696,13 +686,12 @@ class CompanionSettingTab extends PluginSettingTab {
             .setDesc("Multi-line. RiScript: Same as Title, plus $to for mail content to repeat the addressee.");
         this.addTextarea(box, { get: () => mail.content, set: (v) => (mail.content = v), save, rows: 6 });
     }
-    // Program mode's settings: a pill-edited list of scheduled backdrop takeovers (mirrors the Inbox tab). The list persists to program-data.json; there's no interval or constants section — each program carries its own schedule.
     renderProgramTab(c) {
         this.tabIntro(c, "The scheduled broadcasts that take over the panel backdrop.");
         new Setting(c).setName("Program list").setHeading();
         this.programEditor.mount(c);
     }
-    // Per-program editor body: an admin-only label (pill label), the stream-bg-style backdrop, the airing minute, and the RiScript content script. All persist to program-data.json.
+    // Per-program editor body; all fields persist to program-data.json.
     renderProgramBody(containerEl, program, editor) {
         const box = containerEl.createDiv({ cls: "cc-settings-box" });
         const save = () => this.plugin.saveDataFile("programData");
@@ -721,7 +710,7 @@ class CompanionSettingTab extends PluginSettingTab {
             set: (v) => (program.background = v.trim()),
             save,
         });
-        // Slider steps: Off → :01 … :59 → :00. The last step (":00", the top of the hour) is stored as 60 so it can't collide with 0 = off; the scheduler folds it back with % 60.
+        // Slider steps: Off → :01 … :59 → :00 (stored as 60 — see PROGRAM_SCHEMA).
         this.addSliderSetting(box, {
             name: "Schedule",
             desc: "The program airs at this minute past every hour (e.g. :35 → 0:35, 1:35, … 23:35) while the sidebar panel is active. The first step disables it; the last step (:00) is the top of the hour.",
@@ -736,18 +725,17 @@ class CompanionSettingTab extends PluginSettingTab {
             .setDesc("The script that plays while the program airs — one line at a time as a bubble at the bottom, each held like a speech bubble, then the airing ends. Multi-line (one line per beat). RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], lexicon = $rndAdj / $rndNoun / $rndVerb.");
         this.addTextarea(box, { get: () => program.content, set: (v) => (program.content = v), save, rows: 6 });
     }
-    // Render an on/off pill per animation of a role, wired to its settings flag map and drag-paintable. Shared by the idle and surprise grids.
+    // An on/off pill per animation of a role, wired to its settings flag map.
     renderAnimToggles(host, role) {
         const pool = ANIM_POOLS[role];
         const flags = this.plugin.settings[pool.flag];
         this.paintGrid(host, pool.all.map((name) => ({
-            // Display label: explicit row label, else the capitalised name.
             label: ANIM_BY_NAME[name].label ?? name[0].toUpperCase() + name.slice(1),
             get: () => flags[name],
             set: (v) => { flags[name] = v; },
         })));
     }
-    // A grid of toggle pills with drag-paint bulk select: pressing a pill flips it, and that value paints onto every pill the pointer slides across. entries = [{ label, get, set }]; the stroke saves once on release. Builds a FRESH grid element into `host` each call, so the gesture listeners and pill lookup never outlive one paint.
+    // A grid of toggle pills with drag-paint bulk select: pressing a pill flips it, and that value paints onto every pill the pointer slides across; the stroke saves once on release. Builds a FRESH grid element each call, so nothing outlives one paint.
     paintGrid(host, entries, save = null) {
         const grid = host.createDiv({ cls: "cc-pill-grid" });
         const byPill = new Map();
@@ -786,13 +774,13 @@ class CompanionSettingTab extends PluginSettingTab {
                 return;
             releasePointer(grid, pointerId);
             pointerId = null;
-            // A press always flips the pressed pill, so a finished stroke always changed something — persist it (to a list's own file when `save` is given).
+            // A press always flips the pressed pill, so a finished stroke always persists.
             void this.commit(save);
         };
         grid.addEventListener("pointerup", end);
         grid.addEventListener("pointercancel", end);
     }
-    // Pill entries over the character list for a given enable field (root/sidebar each read/write their own boolean).
+    // Pill entries over the character list for a given enable field.
     charPills(get, set) {
         return this.plugin.characterData.characters.map((c) => ({
             label: c.name || "(unnamed)",
@@ -800,20 +788,20 @@ class CompanionSettingTab extends PluginSettingTab {
             set: (v) => set(c, v),
         }));
     }
-    // Pill entries over a named list carrying its own `enabled` flag (comment sets, VIPs, mail templates).
+    // Pill entries over a named list carrying its own `enabled` flag.
     enablePills(list) {
         return list.map((it) => ({ label: it.name || "(unnamed)", get: () => it.enabled, set: (v) => { it.enabled = v; } }));
     }
-    // Pill entries over a registry (effects, aesthetics) whose on/off lives in a shared flag map keyed by row.
+    // Pill entries over a registry whose on/off lives in a shared flag map keyed by row.
     flagPills(registry, flags) {
         return registry.map((r) => ({ label: r.label, get: () => flags[r.key], set: (v) => { flags[r.key] = v; } }));
     }
-    // Mount one enable-pill grid on the tab being rendered: create its host div, store the ref its PILL_GRIDS row names, and paint it. The render tabs call this instead of repeating the div + ref + rebuild by hand.
+    // Mount one enable-pill grid: create its host div, store the ref, paint it.
     mountPillGrid(container, id) {
         this[PILL_GRIDS[id].grid] = container.createDiv();
         this.rebuildPillGrid(id);
     }
-    // Repaint one enable-pill grid from its PILL_GRIDS descriptor into its host, fresh (paintGrid rebuilds the grid element, so nothing stale survives): skip an off-screen host (isConnected — a rebuild triggered from another tab is harmless), show the row's empty-state message when it has one and there are no entries, else drag-paint the pills.
+    // Repaint one enable-pill grid fresh into its host; skip an off-screen host (isConnected — a rebuild triggered from another tab is harmless).
     rebuildPillGrid(id) {
         const g = PILL_GRIDS[id];
         const host = this[g.grid];
@@ -827,7 +815,7 @@ class CompanionSettingTab extends PluginSettingTab {
         }
         this.paintGrid(host, entries, g.save ? () => g.save(this) : null);
     }
-    // Render the per-character toggle icons (CHARACTER_TOGGLES) into a Setting row: one extra button each, flipping its boolean and reflecting state via "cc-toggle-active".
+    // The per-character toggle icons (CHARACTER_TOGGLES) as extra buttons on a Setting row.
     addCharacterToggles(setting, character) {
         for (const t of CHARACTER_TOGGLES) {
             setting.addExtraButton((b) => {
@@ -841,10 +829,9 @@ class CompanionSettingTab extends PluginSettingTab {
             });
         }
     }
-    // Per-character editor body (the ListEditor renders this for the selected char).
+    // Per-character editor body; fields persist to character-data.json. A rerender is only needed when the change alters which/what sprite shows.
     renderCharacterBody(containerEl, character, editor) {
         const box = containerEl.createDiv({ cls: "cc-settings-box" });
-        // Characters live in character-data.json now, so every field persists there (not via saveSettings). A rerender is only needed when the change alters which/what sprite shows (name in pills, sprite path).
         const save = () => this.plugin.saveDataFile("characterData");
         const saveRender = () => this.plugin.saveDataFile("characterData", true);
         this.addTextSetting(box, {
@@ -876,7 +863,7 @@ class CompanionSettingTab extends PluginSettingTab {
             set: (v) => (character.walkSpeedPct = v),
             save,
         });
-        // Stream template vars — the crowd's comments reference these about the shown character. All optional; blanks fall back to a generic default so no comment ever breaks.
+        // Stream template vars — all optional; blanks fall back to generic defaults.
         this.addTextSetting(box, {
             name: "Epithet",
             desc: "Their nickname, used as $epithet. Comma-separate several to draw one at random each time (e.g. \"the Demon Lord, the Tyrant\"). Falls back to \"Name\".",
@@ -926,7 +913,7 @@ class CompanionSettingTab extends PluginSettingTab {
             save,
         });
     }
-    // Per-comment-set editor body: a name and the comment lines (delete via pill right-click).
+    // Per-comment-set editor body.
     renderCommentSetBody(containerEl, set, editor) {
         const box = containerEl.createDiv({ cls: "cc-settings-box" });
         const save = () => this.plugin.saveDataFile("streamData");
