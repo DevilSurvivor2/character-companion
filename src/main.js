@@ -2,6 +2,8 @@
 // Entry point: wires the view, ribbon + command, settings tab, the stage, and the generic sibling-data-file load/save.
 const { Notice, Plugin } = require("obsidian");
 const { DATA_FILES, DATA_FILE_BY_PROP, FLAG_MAPS, SETTINGS_SCHEMA, boolMap, shapeIsEmpty } = require("./registries.js");
+// Build-injected default seeds, keyed by sibling-file name — one entry per src/data/*.json (see esbuild.config.mjs).
+const DATA_SEEDS = require("virtual:seed-data");
 const { whenStyled } = require("./toolkit.js");
 const { RiScriptEngine } = require("./riscriptengine.js");
 const { CompanionStage } = require("./companionstage.js");
@@ -83,11 +85,12 @@ class CharacterCompanionPlugin extends Plugin {
         await this.saveData(this.settings);
     }
     // Generic sibling-file load: read, shape, and seed the file when genuinely MISSING. Never seed on corrupt — readJsonFile backed it up, and rewriting would overwrite the user's only copy.
+    // Seed priority: the row's inline seed, else src/data/<file> (DATA_SEEDS), else ship empty.
     async loadDataFile(desc) {
         const { data, existed } = await this.readJsonFile(this.manifest.dir + "/" + desc.file);
         let shaped = desc.shape(data);
-        if (desc.seed && !existed && shapeIsEmpty(shaped)) {
-            const seedRaw = await desc.seed(this);
+        if (!existed && shapeIsEmpty(shaped)) {
+            const seedRaw = desc.seed ? await desc.seed(this) : DATA_SEEDS[desc.file];
             if (seedRaw)
                 shaped = desc.shape(seedRaw);
         }
@@ -102,21 +105,27 @@ class CharacterCompanionPlugin extends Plugin {
         if (desc.afterSave)
             desc.afterSave(this, rerender);
     }
-    // Read a sibling JSON file. Returns { data, existed }: missing -> {null, false} (safe to seed); corrupt -> {null, true} (backed up as .bak, never overwritten).
+    // Read a sibling JSON file; only missing files are safe to seed.
     async readJsonFile(path) {
         const adapter = this.app.vault.adapter;
         if (!(await adapter.exists(path)))
             return { data: null, existed: false };
-        let text = null;
+        let text;
         try {
             text = await adapter.read(path);
+        }
+        catch {
+            new Notice("Character Companion: " + path.split("/").pop() + " couldn't be read. No changes were made; that list stays empty until the file can be read again.", 12000);
+            return { data: null, existed: true };
+        }
+        try {
             return { data: JSON.parse(text), existed: true };
         }
         catch {
-            // Existing file we couldn't read/parse: back it up, warn, and never signal "missing" — clobbering it would destroy the only copy.
-            if (text != null)
-                try { await adapter.write(path + ".corrupt-" + Date.now() + ".bak", text); } catch { /* best effort */ }
-            new Notice("Character Companion: " + path.split("/").pop() + " couldn't be read (corrupt JSON). A .bak copy was saved beside it; that list stays empty until the file is repaired or you re-add its items.", 12000);
+            let backedUp = false;
+            try { await adapter.write(path + ".corrupt-" + Date.now() + ".bak", text); backedUp = true; } catch { /* best effort */ }
+            const backup = backedUp ? "A .bak copy was saved beside it." : "A backup could not be saved.";
+            new Notice("Character Companion: " + path.split("/").pop() + " contains invalid JSON. " + backup + " That list stays empty until the file is repaired or you re-add its items.", 12000);
             return { data: null, existed: true };
         }
     }

@@ -59,11 +59,11 @@
 }
 
 /* When a backdrop shows (stream bg or a program airing's cover), give the icon glyph a halo for legibility. */
-.cc-root:has(.cc-anchor.cc-streaming, .cc-anchor.cc-program) .cc-icon-btn:not(.cc-icon-active) {
+.cc-root:has(.cc-anchor.cc-streaming, .cc-program-cover:not(.cc-hijack-hidden)) .cc-icon-btn:not(.cc-icon-active) {
     color: var(--text-normal);
     opacity: 1;
 }
-.cc-root:has(.cc-anchor.cc-streaming, .cc-anchor.cc-program) .cc-icon-btn:not(.cc-icon-active) .svg-icon {
+.cc-root:has(.cc-anchor.cc-streaming, .cc-program-cover:not(.cc-hijack-hidden)) .cc-icon-btn:not(.cc-icon-active) .svg-icon {
     filter:
         drop-shadow(0 0 0px var(--text-normal)) 
         drop-shadow(0 0 1px var(--background-primary));
@@ -93,23 +93,14 @@
     filter: blur(1px);
 }
 
-/* Program cover layer: the airing's image fades in crisp ABOVE the sprite and backdrop, blocking their pointer events. The fade restates the universal hijack recipe (a pseudo-element can't take the cc-hijack classes); --cc-program-bg keeps its last image so the fade-out still shows the airing. Effects and overlays sit higher. */
-.cc-anchor::after {
-    content: "";
+/* Program cover layer: the airing's image fades in crisp ABOVE the sprite and backdrop (same z-index as the sprite wrap; later DOM order wins), blocking their pointer events. The fade rides the universal cc-hijack classes; --cc-program-bg keeps its last image so the fade-out still shows the airing. Effects and overlays sit higher. */
+.cc-program-cover {
     position: absolute;
     inset: 0;
     z-index: 1;
     background-image: var(--cc-program-bg, none);
     background-size: cover;
     background-position: center;
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity var(--cc-hijack-fade) ease, visibility 0s var(--cc-hijack-fade);
-}
-.cc-anchor.cc-program::after {
-    opacity: 1;
-    visibility: visible;
-    transition: opacity var(--cc-hijack-fade) ease, visibility 0s;
 }
 
 /* Empty-state message, shared by the panel body and the settings grids. */

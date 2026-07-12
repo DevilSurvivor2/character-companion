@@ -1,14 +1,15 @@
 # Personal vault content — your own characters / comments / mail / settings.
-data.json
-character-data.json
-stream-data.json
-mail-data.json
-blog-data.json
-news-data.json
-program-data.json
-oracle-data.json
-CLAUDE.md
-AGENTS.md
+# Leading slashes anchor these to the plugin root so they do NOT also match src/data/ seeds.
+/data.json
+/character-data.json
+/stream-data.json
+/mail-data.json
+/blog-data.json
+/news-data.json
+/program-data.json
+/oracle-data.json
+/CLAUDE.md
+/AGENTS.md
 
 # Corruption backups written by readJsonFile
 *.bak

@@ -42,13 +42,6 @@ const FEED_SOURCES = [
         push: (v, raw) => v.pushNews(raw),
     },
 ];
-// Split a news headline's optional leading [SECTION]; later [a | b] remains a RiScript choice.
-function parseNewsLine(raw) {
-    const m = /^\s*\[([^\]]*)\]\s*/.exec(raw || "");
-    return m
-        ? { section: m[1].trim(), body: raw.slice(m[0].length).trim() }
-        : { section: "", body: (raw || "").trim() };
-}
 const VIEW_TYPE_COMPANION = "character-companion-view";
 // Sidebar panel: a single stage-less Walker drawn from sidebar-enabled characters. Owns the icon column, stream background, comment feed, and sprite liveness.
 class CompanionView extends ItemView {
@@ -226,8 +219,9 @@ class CompanionView extends ItemView {
         this.syncTimer("programStop", programScheduled,
             () => { const ms = 60000 - (Date.now() % 60000); return { lo: ms, hi: ms }; },
             () => this.checkPrograms());
+        // A blur (or the last schedule going off) ends any airing; this sync's own tail reconciles the cover + bar — no second pass.
         if (!programScheduled)
-            this.endProgram();
+            this.program = null;
         this.feed.applyFont();
         this.paintBackground();
         this.aesthetics.sync();
@@ -279,37 +273,42 @@ class CompanionView extends ItemView {
             { cls: "tags", text: ev(toks.slice(1, i).join(" ")) },
         ], "cc-feed-bubble-blog");
     }
-    // One news beat. Chyron face: hand chyronPass a LAZY strip builder — it runs only when a pass can go out, so a busy pass or airing wastes no draws. Feed face: split off the [SECTION], evaluate both parts, push as a two-part bubble.
+    // One news beat. Chyron face: when a pass can go out, build a strip and cue it — a beat landing mid-pass or mid-airing is dropped BEFORE any extra draws. Feed face: push the evaluated headline as a two-part bubble.
     pushNews(raw) {
         if (!raw) return;
         if (!this.settings.newsToFeed) {
-            this.aesthetics.chyronPass(() => this.chyronStrip(raw));
+            if (this.aesthetics.chyronReady())
+                this.aesthetics.chyronPass(this.chyronStrip(raw));
             return;
         }
-        const R = this.plugin.riscript;
-        const { section, body } = parseNewsLine(raw);
-        if (R.pending(section + " " + body)) return;
-        const ctx = this.charCtx(this.plugin.newsData.constants);
-        this.feed.push([
-            { cls: "section", text: section && R.evalTrim(section, ctx) },
-            { cls: "body", text: R.evalTrim(body, ctx) },
-        ], "cc-feed-bubble-news");
+        const h = this.evalNewsLine(raw, this.charCtx(this.plugin.newsData.constants));
+        if (h)
+            this.feed.push([
+                { cls: "section", text: h.section },
+                { cls: "body", text: h.body },
+            ], "cc-feed-bubble-news");
     }
     // One chyron pass's strip: the beat's own draw plus up to --cc-news-chyron-max - 1 more from the SAME news bag, sections dropped. Returns "" when nothing renders.
     chyronStrip(raw) {
-        const R = this.plugin.riscript;
         const pool = this.plugin.newsData.messages;
         const ctx = this.charCtx(this.plugin.newsData.constants);
         const cap = Math.min(tuning().newsChyronMax, pool.length);
         const count = cap > 0 ? randInt(1, cap) : 0;
         const lines = [];
         for (let i = 0; i < count; i++) {
-            const { body } = parseNewsLine(i > 0 ? this.newsBag.next(pool) : raw);
-            if (!body || R.pending(body)) continue;
-            const line = R.evalTrim(body, ctx);
-            if (line) lines.push(line);
+            const h = this.evalNewsLine(i > 0 ? this.newsBag.next(pool) : raw, ctx);
+            if (h && h.body) lines.push(h.body);
         }
         return lines.join("  •  ");
+    }
+    // Evaluate one headline for either face: split the optional leading [SECTION] (a later [a | b] stays a RiScript choice), evaluate each part. Null while a templated line waits on the engine.
+    evalNewsLine(raw, ctx) {
+        const R = this.plugin.riscript;
+        const m = /^\s*\[([^\]]*)\]\s*/.exec(raw);
+        const section = m ? m[1].trim() : "";
+        const body = (m ? raw.slice(m[0].length) : raw).trim();
+        if (!body || R.pending(section + " " + body)) return null;
+        return { section: section && R.evalTrim(section, ctx), body: R.evalTrim(body, ctx) };
     }
     // The shown character's vars with a mode's own constants layered on top as choice rules.
     charCtx(vars) {
@@ -399,13 +398,14 @@ class CompanionView extends ItemView {
         if (streaming && !this.bgUrl)
             this.bgUrl = this.nextBg();
         const running = streaming && this.isLive();
-        // --cc-program-bg is only ever written, never cleared, so the image survives its own fade-out (the universal hijack transition — see panel.css).
         const program = (this.program && this.program.url && this.isLive()) ? this.program.url : null;
         anchor.classList.toggle("cc-streaming", !!(streaming && this.bgUrl));
-        anchor.classList.toggle("cc-program", !!program);
         anchor.setCssProps({ "--cc-bg": streaming && this.bgUrl ? `url("${this.bgUrl}")` : "none" });
+        // --cc-program-bg is only ever written, never cleared, so the image survives the cover's own fade-out (the universal hijack transition).
+        const cover = anchor.querySelector(".cc-program-cover");
+        cover.classList.toggle("cc-hijack-hidden", !program);
         if (program)
-            anchor.setCssProps({ "--cc-program-bg": `url("${program}")` });
+            cover.setCssProps({ "--cc-program-bg": `url("${program}")` });
         // Reconcile effects: toggle each class, build/teardown DOM to match.
         if (!this.builtFx || this.builtFx.anchor !== anchor) {
             this.teardownEffects();
@@ -469,6 +469,8 @@ class CompanionView extends ItemView {
         const anchor = root.createDiv({ cls: "cc-anchor" });
         const spriteWrap = anchor.createDiv({ cls: "cc-sprite-wrap" });
         const sprite = spriteWrap.createEl("img", { cls: "cc-sprite" });
+        // Program cover layer, created hidden AFTER the sprite wrap (same z-index — DOM order puts it on top); paintBackground fades it in over sprite + backdrop during an airing.
+        anchor.createDiv({ cls: "cc-program-cover cc-hijack cc-hijack-hidden" });
         // Bubble lives on the panel's own <body> so the leaf frame can never clip it; being off-panel, root.empty() can't reap it — cleanupWalker removes it.
         const bubble = root.doc.body.createDiv({ cls: "cc-bubble" });
         this.walker = new Walker(null, this.plugin, character, { wrapEl: spriteWrap, imgEl: sprite, bubbleEl: bubble, bubbleAnchorEl: sprite }, urls, 0);

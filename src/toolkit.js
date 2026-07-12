@@ -35,15 +35,26 @@ function formatHMS(totalS) {
     const p = (n) => String(n).padStart(2, "0");
     return `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`;
 }
-// Self-rescheduling random timer: waits randRange(lo, hi) ms, fires fn(), repeats; range() is re-read every cycle so live setting edits apply. Returns a stop() handle. `win` must be the OWNING window, captured once — timer ids don't cross windows.
+// Self-rescheduling timer whose range is re-read before each beat.
 function randomInterval(win, range, fn) {
     let timer = null;
+    let stopped = false;
     const tick = () => {
+        if (stopped)
+            return;
         const { lo, hi } = range();
-        timer = win.setTimeout(() => { fn(); tick(); }, randRange(lo, Math.max(lo, hi)));
+        timer = win.setTimeout(() => {
+            timer = null;
+            try { fn(); }
+            finally { tick(); }
+        }, randRange(lo, Math.max(lo, hi)));
     };
     tick();
-    return () => { if (timer != null) win.clearTimeout(timer); };
+    return () => {
+        stopped = true;
+        if (timer != null) win.clearTimeout(timer);
+        timer = null;
+    };
 }
 // Reconcile a named randomInterval at host[handle] to on/off (idempotent — a live timer is left alone).
 function reconcileTimer(host, win, handle, on, range, fire) {

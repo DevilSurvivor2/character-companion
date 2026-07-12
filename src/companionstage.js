@@ -112,6 +112,8 @@ class CompanionStage {
                 changed = true;
                 continue;
             }
+            w.character = c;
+            w.imgEl.alt = c.name;
             w.speed = speed;
             if (urls.length === 0) {
                 this.destroyWalker(w);

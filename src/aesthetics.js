@@ -7,7 +7,7 @@ const BOTTOM_OCCUPANTS = [
     // Stream: the fake react bar — the bar's resting holder.
     { key: "stream", wants: (a) => a.settings.streamEnabled && !!a.settings.enabledAesthetics.react, build: (a, bar) => a.buildReactBar(bar) },
     // (Roleplay/game mode slots in between stream and news when it lands.) News: the chyron — pure display, no timer; wants the bar only while a pass is in flight.
-    { key: "news", wants: (a) => a.settings.streamEnabled && a.settings.newsEnabled && !a.settings.newsToFeed && a.chyronOn, build: (a, bar) => a.buildChyron(bar), liveOnly: true },
+    { key: "news", wants: (a) => a.chyronMode() && a.chyronOn, build: (a, bar) => a.buildChyron(bar), liveOnly: true },
     // Program: an airing's content, one line at a time; the sequence ends the airing.
     { key: "program", wants: (a) => !!a.view.program, build: (a, bar) => a.buildProgram(bar), liveOnly: true },
 ];
@@ -23,13 +23,12 @@ class Aesthetics {
         this.uptimeStop = null;
         this.uptimeS = 0;
         this.viewerStop = null;
-        this.viewerCount = 0;
+        this.viewerCount = null;
         // Per-row occupant handles and the row currently holding the bar (null = empty).
         this.bottomEls = null;
         this.bottomKey = null;
-        // chyronOn marks a pass in flight; chyronAnim is the scroll, kept after finishing — its "both" fill holds the strip off-screen through the bar's fade-out.
+        // chyronOn marks a pass in flight (read by the news row's wants); the scroll anim and track live in the occupant's handle.
         this.chyronOn = false;
-        this.chyronAnim = null;
         this.particles = new Set();
     }
     get settings() { return this.plugin.settings; }
@@ -61,7 +60,10 @@ class Aesthetics {
             this.bottomEls[row.key] = row.build(this, bar);
         this.bottomKey = null;
         els.fx = els.root.createDiv({ cls: "cc-aes-fx" });
-        this.renderCounters();
+        if (this.viewerCount === null)
+            this.resetCounters();
+        else
+            this.renderCounters();
     }
     // Reconcile ticker visibility, the bottom bar, and the two sync-gated ticker timers.
     sync() {
@@ -104,7 +106,7 @@ class Aesthetics {
         if (!live || !show("react"))
             this.clearParticles();
     }
-    // Hand the bottom bar to the LAST wanting, live-eligible row: stop the loser, toggle cc-hijack-hidden, then run the winner's start() — last, because it may re-enter this sync (a program whose every line is unrenderable ends the airing synchronously). Returns whether any row holds the bar.
+    // Hand the bottom bar to the LAST wanting, live-eligible row: stop the loser, toggle cc-hijack-hidden, then run the winner's start(). Returns whether any row holds the bar.
     syncBottom() {
         const live = this.view.isLive();
         const winner = [...BOTTOM_OCCUPANTS].reverse().find((r) => r.wants(this) && (!r.liveOnly || live));
@@ -142,50 +144,60 @@ class Aesthetics {
         like.addEventListener("click", () => this.spawnHeart());
         return { el: react };
     }
-    // "news" occupant: the chyron's persistent element — pass logic lives in chyronPass. stop jumps a cut-short pass to its end state via finish(), whose async onfinish then runs the normal pass-over path.
+    // News mode's chyron face is selected (the bar face; the newsToFeed switch picks feed bubbles instead).
+    chyronMode() {
+        return this.settings.streamEnabled && this.settings.newsEnabled && !this.settings.newsToFeed;
+    }
+    // A fresh pass can go out: the chyron face is live and nothing (a pass in flight, an airing) is ahead of it. pushNews gates each news beat on this BEFORE building its strip, so a dropped beat draws no extra headlines.
+    chyronReady() {
+        return !!this.els && this.view.isLive() && this.chyronMode() && !this.chyronOn && !this.view.program;
+    }
+    // Cue one chyron pass with a built strip ("" = nothing renderable, skip).
+    chyronPass(text) {
+        if (text)
+            this.bottomEls.news.pass(text);
+    }
+    // "news" occupant: the chyron. pass runs one strip; stop jumps a cut-short pass to its end state via finish(), whose async onfinish then runs the normal pass-over path.
     buildChyron(bar) {
         const el = bar.createDiv({ cls: "cc-aes-chyron cc-hijack cc-hijack-hidden" });
-        this.els.chyronTrack = el.createSpan({ cls: "cc-aes-chyron-track" });
-        return { el, stop: () => {
-            this.chyronOn = false;
-            if (this.chyronAnim && this.chyronAnim.playState === "running")
-                this.chyronAnim.finish();
-        } };
-    }
-    // One chyron pass, cued by each news feed beat (the news interval is the only cadence). `strip` is lazy: a beat landing mid-pass or mid-airing is skipped before it runs. The pass hijacks the bar, scrolls once via WAAPI, hands the bar back on finish; the scroll's delay covers the fade-in, and the "both" fill parks the strip off-screen on both sides of the run so nothing snaps back into view.
-    chyronPass(strip) {
-        if (!this.els || !this.view.isLive() || !this.settings.streamEnabled || !this.settings.newsEnabled || this.settings.newsToFeed || this.chyronOn || this.view.program)
-            return;
-        const text = strip();
-        if (!text)
-            return;
-        // Release the previous pass's held fill before the strip is reused.
-        if (this.chyronAnim)
-            this.chyronAnim.cancel();
-        const track = this.els.chyronTrack;
-        track.setText(text);
-        // Take the bar BEFORE measuring — widths are 0 while the wrapper is display:none.
-        this.chyronOn = true;
-        this.sync();
-        const t = tuning();
-        const el = this.bottomEls.news.el;
-        // Enter from the right edge, exit fully left, at constant px/sec.
-        const travel = el.clientWidth + track.scrollWidth;
-        this.chyronAnim = track.animate([
-            { transform: `translateX(${el.clientWidth}px)` },
-            { transform: `translateX(${-track.scrollWidth}px)` },
-        ], {
-            delay: t.hijackFade,
-            duration: (travel / t.newsChyronSpeed) * 1000,
-            easing: "linear",
-            fill: "both",
-        });
-        this.chyronAnim.onfinish = () => {
-            this.chyronOn = false;
-            this.sync();
+        const track = el.createSpan({ cls: "cc-aes-chyron-track" });
+        // The scroll anim is kept after finishing — its "both" fill holds the strip off-screen through the bar's fade-out; the next pass releases it.
+        let anim = null;
+        return {
+            el,
+            // One pass: hijack the bar, scroll once via WAAPI, hand the bar back on finish; the scroll's delay covers the fade-in, and the "both" fill parks the strip off-screen on both sides of the run so nothing snaps back into view.
+            pass: (text) => {
+                if (anim)
+                    anim.cancel();
+                track.setText(text);
+                // Take the bar BEFORE measuring — widths are 0 while the wrapper is display:none.
+                this.chyronOn = true;
+                this.sync();
+                const t = tuning();
+                // Enter from the right edge, exit fully left, at constant px/sec.
+                const travel = el.clientWidth + track.scrollWidth;
+                anim = track.animate([
+                    { transform: `translateX(${el.clientWidth}px)` },
+                    { transform: `translateX(${-track.scrollWidth}px)` },
+                ], {
+                    delay: t.hijackFade,
+                    duration: (travel / t.newsChyronSpeed) * 1000,
+                    easing: "linear",
+                    fill: "both",
+                });
+                anim.onfinish = () => {
+                    this.chyronOn = false;
+                    this.sync();
+                };
+            },
+            stop: () => {
+                this.chyronOn = false;
+                if (anim && anim.playState === "running")
+                    anim.finish();
+            },
         };
     }
-    // "program" occupant: play the airing's lines one at a time, each held per the shared speech-bubble staying time; after the last hold the airing ENDS (handing the bar back). Strictly one pending timer, cancelled by stop() — a step can never run after the row loses the bar.
+    // "program" occupant: play the airing's lines one at a time, each held per the shared speech-bubble staying time; after the last hold the airing ENDS (handing the bar back). Strictly one pending timer, cancelled by stop() — a step can never run after the row loses the bar. A mid-airing rebuild restarts the script from the top.
     buildProgram(bar) {
         const bubble = bar.createDiv({ cls: "cc-aes-program cc-hijack cc-hijack-hidden" });
         let timer = null;
@@ -193,7 +205,7 @@ class Aesthetics {
             el: bubble,
             start: () => {
                 const R = this.plugin.riscript;
-                const lines = this.view.program ? this.view.program.lines : [];
+                const { lines } = this.view.program;
                 const ctx = this.view.streamCtx();
                 let i = 0;
                 const step = () => {
@@ -215,7 +227,8 @@ class Aesthetics {
                     bubble.removeClass("cc-hijack-hidden");
                     timer = this.win.setTimeout(step, bubbleHoldMs(bubble, this.settings.quoteDurationMs, text));
                 };
-                step();
+                // The first step is deferred so an all-unrenderable script ends the airing OUTSIDE the sync that started it — no re-entrant handover.
+                timer = this.win.setTimeout(step, 0);
             },
             stop: () => {
                 if (timer != null) {

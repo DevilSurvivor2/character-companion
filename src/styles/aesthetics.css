@@ -10,7 +10,7 @@
 .cc-aes.cc-aes-show {
     display: block;
 }
-.cc-hidden {
+.cc-aes .cc-hidden {
     display: none !important;
 }
 
@@ -59,7 +59,7 @@
     white-space: nowrap;
 }
 
-/* Universal hijack transition — every takeover fades through this one recipe. cc-hijack carries the transition; cc-hijack-hidden fades to nothing (visibility waits out the fade so a hidden react bar can't be clicked, but snaps back instantly on reveal). The program's scene cover restates the recipe in panel.css. */
+/* Universal hijack transition — every takeover (bar occupants AND the program's scene cover) fades through this one recipe. cc-hijack carries the transition; cc-hijack-hidden fades to nothing (visibility waits out the fade so a hidden react bar can't be clicked, but snaps back instantly on reveal). */
 .cc-hijack {
     transition: opacity var(--cc-hijack-fade) ease, visibility 0s;
 }

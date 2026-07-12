@@ -28,6 +28,8 @@ class Oracle {
     get nlp() { return this.plugin.riscript.nlp; }
     // Reconcile to whether Oracle should run; lazy-loads on first run, failure latches.
     async sync(want) {
+        if (!this.settings.oracleVipReactsToTyping)
+            this.clearTyping();
         if (want) {
             if (this.loadFailed) return;
             if (!this.loaded) {
@@ -55,7 +57,7 @@ class Oracle {
         }
         catch (e) {
             this.loadFailed = true;
-            new Notice("Character Companion: Oracle mode needs its engine files in the plugin's lib/ folder (desktop only) — see lib/README.md. (" + e.message + ")", 8000);
+            new Notice("Character Companion: Oracle mode needs its engine files in the plugin's lib/ folder (desktop only) — see lib/UPDATE.md. (" + e.message + ")", 8000);
             return false;
         }
     }
@@ -95,6 +97,9 @@ class Oracle {
         this.stops.forEach((stop) => stop());
         this.stops = [];
         if (this.editRef) { this.app.workspace.offref(this.editRef); this.editRef = null; }
+        this.clearTyping();
+    }
+    clearTyping() {
         if (this.editTimer != null) { this.view.containerEl.win.clearTimeout(this.editTimer); this.editTimer = null; }
         this.context = null;
     }
@@ -164,7 +169,7 @@ class Oracle {
     pushVip() {
         if (!this.enabledVips.length) return;
         // React to a fresh typed context if there is one, else an ambient VIP; the VIP's own match-list fills $topic when the context left it empty.
-        const ctx = this.context && Date.now() - this.context.ts <= tuning().oracleReactWindow ? this.context : null;
+        const ctx = this.settings.oracleVipReactsToTyping && this.context && Date.now() - this.context.ts <= tuning().oracleReactWindow ? this.context : null;
         const vip = (ctx && this.enabledVips[ctx.vipIndex]) || pick(this.enabledVips);
         if (!vip.reactions.length) return;
         const topic = this.nounify((ctx && ctx.topic) || pick(this.syms(vip)));

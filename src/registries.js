@@ -1,6 +1,5 @@
 "use strict";
 // Declarative registries, schemas, seeds, and defaults — the pure-data layer. Behaviour tables whose rows call methods on a class instance live next to that class instead.
-const DEFAULT_ORACLE = require("../default-oracle-data.json");
 // One row = one cc-anim-<name> class in animations.css. role: surprise/idle (toggleable), sleep/flip/bob/tickle (playRole), effect (internal). directional: keyframes read --cc-dir. root:false excludes it from bottom-of-window walkers.
 const ANIMATIONS = [
     // surprise — click reactions.
@@ -248,18 +247,30 @@ const SEED_BLOG = {
     ],
 };
 const SEED_NEWS = {
-    constants: { source: ["city officials", "unnamed officials", "eyewitnesses", "police sources"], district: ["downtown", "the harbor district", "the old quarter", "Gateway Bridge"] },
+    constants: {
+        source: ["leaked document", "press release", "police report", "eyewitness", "unnamed official", "social media post", "rumor", "conspiracy theory", "urban legend"],
+        villain: ["mastermind", "ringleader", "gangster", "mobster", "assassin", "murderer", "drug dealer", "pimp", "felon", "perpetrator", "offender", "robber", "burglar", "mugger", "thief", "crook", "hoodlum", "thug", "goon", "lackey"],
+        civilian: ["resident", "citizen", "denizen", "bystander", "onlooker", "office worker", "laborer"],
+        district: ["northside", "southside", "eastside", "westside", "uptown", "midtown", "downtown", "oldtown", "newtown", "heights", "flats", "waterfront", "riverside", "bayside", "quayside", "suburbs", "outskirts", "estates", "enclave", "commune", "tenements", "projects", "slums", "bazaar", "supermarket", "mall", "promenade", "theater district", "red-light district", "campus", "library", "museum", "park", "zoo", "stadium", "temple", "graveyard", "embassy", "precinct", "garrison", "citadel", "factories", "foundry", "refinery", "powerplant", "warehouses", "docks", "shipyard", "trainyard", "airport", "metro", "sewers", "crossroads"],
+    },
     messages: [
-        "[BREAKING] $name spotted $deed.ing() near $district, $source confirm",
-        "$name, $epithet, declined to comment on $topic this morning",
-        "[POLL] 6 in 10 residents now trust a $role more than city hall",
-        "[WEATHER] clear skies over $district, no thanks to anyone in particular",
-        "[EXCLUSIVE] $source say $name has been $deed.ing() for months",
-        "Experts warn $topic could reshape the city within a year",
+        "[BREAKING] $name [seen | spotted] $deed.ing() [near | around] $district",
+        "[EXCLUSIVE] $source.pluralize() say $name has been $deed.ing() for [days | months | years]",
+        "[UPDATE] $name's whereabouts still unknown",
+        "$name, $epithet, declined to comment on $topic this [morning | afternoon | evening]",
+        "[POLL] [6 | 7 | 8 | 9] in 10 $civilian.pluralize() now [agree with | approve of | trust | endorse] $role.pluralize() more than [city hall | the police]",
+        "\"Never [thought | believed | considered] $name would be the one to help us,\" one $civilian commented",
+        "Authorities are investigating $name's alleged involvement in a [string of | spate of] $rndAdj [crimes | scandals], but no [evidence | proof | wrongdoing] has [come to light | surfaced | turned up] [yet | thus far | so far | to date]",
+        "[CRIME] police [now brand | have labelled | openly call] $name the $rndAdj $villain [behind | at the heart of | pulling the strings on] [last night's | this morning's] [break-ins | disappearances | disturbances] [near | around | across] $district",
+        "[WEATHER] [fog over $district through the evening, with visibility low | clear skies over $district | storm clouds gathering on the horizon | expect $num<1-2>°C today, with a [high | low] chance of [rain | snow | sleet | hail | sunshine | moonshine] tonight]",
+        "[MARKETS] $name futures [up | down | flat] on rumors of [$topic | $deed.ing()]",
+        "Experts warn $topic could reshape $district within a [day | month | year]",
         "[TRAFFIC] expect delays around $district while $name is busy $deed.ing()",
-        "[OPINION] we need to talk about $topic, and about $name",
-        "[MARKETS] closed [up | down | flat] after rumors about $topic",
-        "[TONIGHT] an in-depth look at the $role everyone keeps talking about",
+        "[TALK SHOW] an in-depth look at the $role everyone keeps talking about, tonight at [8 | 9 | 10 | 11] PM on Channel $num<1>",
+        "[BEST-SELLING] $name's new biography, \"$epithet in the Age of $topic\", hits shelves this weekend to [mixed | rave] reviews",
+        "our local $role is [making headlines | trending | going viral] [once | yet] again after [recent | the latest] [events | incidents | accidents]",
+        "$epithet has sparked [debate | outrage | support] on social media",
+        "[STATS] $num<1-2>% rise in $role sightings",
     ],
 };
 const SEED_PROGRAM = {
@@ -269,7 +280,7 @@ const SEED_PROGRAM = {
         content: "We interrupt your evening for a special bulletin.\nReports place $name near [downtown | the harbor] tonight.\nMore on this story as it develops. Back to you.",
     }],
 };
-// Sibling data files (kept out of data.json); one row drives the generic load/save. Fields: prop (plugin field), file, shape (raw)=>in-memory object, create (write when genuinely MISSING, never on corrupt), seed (first-run content), afterSave (side effects).
+// Sibling data files (kept out of data.json); one row drives the generic load/save. Fields: prop (plugin field), file, shape (raw)=>in-memory object, create (write when genuinely MISSING, never on corrupt), seed (inline first-run content; omit to fall back to src/data/<file>, else ship empty), afterSave (side effects).
 const DATA_FILES = [
     {
         prop: "characterData", file: "character-data.json", create: true, seed: () => SEED_CHARACTERS,
@@ -290,9 +301,8 @@ const DATA_FILES = [
         },
     },
     {
-        // Seed ships as default-oracle-data.json, bundled into main.js at build time.
+        // No inline seed: the bulky default lives in src/data/oracle-data.json and is resolved by the loader's DATA_SEEDS fallback.
         prop: "oracleData", file: "oracle-data.json", create: false,
-        seed: () => DEFAULT_ORACLE,
         shape: (raw) => {
             raw = raw || {};
             return {

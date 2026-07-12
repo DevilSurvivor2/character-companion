@@ -1,8 +1,29 @@
 import esbuild from "esbuild";
 import process from "process";
 import fs from "fs";
+import path from "path";
 
 const prod = process.argv[2] === "production";
+
+// Universal seed resolution: `require("virtual:seed-data")` becomes a map keyed by sibling-file name,
+// one entry per src/data/*.json. A DATA_FILES row with no inline seed falls back to its entry here;
+// no file means no entry means the list ships empty. Drop a <sibling>.json in src/data to ship a default.
+const SEED_DATA_DIR = "src/data";
+const seedDataPlugin = {
+  name: "seed-data",
+  setup(build) {
+    build.onResolve({ filter: /^virtual:seed-data$/ }, () => ({ path: "seed-data", namespace: "seed-data" }));
+    build.onLoad({ filter: /.*/, namespace: "seed-data" }, () => {
+      const files = fs.existsSync(SEED_DATA_DIR) ? fs.readdirSync(SEED_DATA_DIR).filter((f) => f.endsWith(".json")) : [];
+      const entries = files.map((f) => `  ${JSON.stringify(f)}: require(${JSON.stringify("./" + f)})`);
+      return {
+        contents: `module.exports = {\n${entries.join(",\n")}\n};\n`,
+        resolveDir: path.resolve(SEED_DATA_DIR),
+        watchFiles: files.map((f) => path.resolve(SEED_DATA_DIR, f)),
+      };
+    });
+  },
+};
 
 // RiTa (a global-assigning browser script) is prepended wrapped in a function, so its
 // 1.5 MB parses/runs on first engine use (__ccLoadRita), not at plugin load. The wrapper
@@ -41,6 +62,7 @@ const ctx = await esbuild.context({
   target: "es2022",
   platform: "browser",
   banner: { js: ritaLazy },
+  plugins: [seedDataPlugin],
   outfile: "main.js",
   minify: prod,
   sourcemap: prod ? false : "inline",
@@ -57,5 +79,8 @@ if (prod) {
     try { buildStyles(); console.log("styles.css rebuilt"); }
     catch (e) { console.error("styles.css rebuild failed:", e.message); }
   });
+  // watchFiles covers edits to existing seeds; watch the dir so adding/removing one rebuilds too.
+  if (fs.existsSync(SEED_DATA_DIR))
+    fs.watch(SEED_DATA_DIR, () => ctx.rebuild().catch((e) => console.error("seed-data rebuild failed:", e.message)));
   await ctx.watch();
 }

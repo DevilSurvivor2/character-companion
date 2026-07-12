@@ -626,7 +626,7 @@ class CompanionSettingTab extends PluginSettingTab {
         });
         this.addToggleSetting(c, {
             name: "Feed instead of chyron",
-            desc: "Off: headlines scroll across the bottom-bar chyron, several per pass. On: each beat drops one headline into the comment feed as a bubble instead.",
+            desc: "Off: headlines scroll across the bottom-bar chyron, several per pass — the chyron rides stream mode's bar, so it only shows while stream mode is on. On: each beat drops one headline into the comment feed as a bubble instead (no stream mode needed).",
             key: "newsToFeed",
         });
         new Setting(c).setName("Message list").setHeading();
