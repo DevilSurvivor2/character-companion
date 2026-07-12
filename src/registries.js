@@ -109,13 +109,16 @@ const strMap = (v) => {
 };
 const str = (v) => typeof v === "string" ? v : "";
 const bool = (def) => (v) => typeof v === "boolean" ? v : def;
-const num = (def) => (v) => typeof v === "number" ? v : def;
+const bounded = (def, min = -Infinity, max = Infinity) => (v) => Math.min(max, Math.max(min, typeof v === "number" && Number.isFinite(v) ? v : def));
+const integer = (def, min, max) => (v) => Math.round(bounded(def, min, max)(v));
+const oneOf = (def, values) => (v) => values.includes(v) ? v : def;
+const isRecord = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 // Per-list-item schemas: rows of { key, coerce }; coerce(undefined) yields the default. One source for both load (coerceItem) and create (newItem). `id` is implicit.
 const CHARACTER_SCHEMA = [
     { key: "name", coerce: str },
     { key: "spritePath", coerce: str },
     { key: "quotes", coerce: strList },
-    { key: "walkSpeedPct", coerce: num(100) },
+    { key: "walkSpeedPct", coerce: bounded(100, 0, 200) },
     { key: "rootEnabled", coerce: bool(false) },
     { key: "sidebarEnabled", coerce: bool(true) },
     // Stream template vars; all optional, streamCtx() provides safe defaults.
@@ -161,15 +164,17 @@ const PROGRAM_SCHEMA = [
     { key: "label", coerce: str },
     { key: "background", coerce: str },
     { key: "content", coerce: str },
-    { key: "schedule", coerce: num(0) },
+    { key: "schedule", coerce: integer(0, 0, 60) },
 ];
 // Normalise a loaded object to exactly its schema fields (drop unknowns), keep/mint its id.
 function coerceItem(schema, raw) {
+    raw = isRecord(raw) ? raw : {};
     const out = { id: typeof raw.id === "string" ? raw.id : genId() };
     for (const f of schema)
         out[f.key] = f.coerce(raw[f.key]);
     return out;
 }
+const coerceList = (schema, value) => Array.isArray(value) ? value.filter(isRecord).map((item) => coerceItem(schema, item)) : [];
 function newItem(schema, overrides) {
     const out = { id: genId() };
     for (const f of schema)
@@ -269,8 +274,7 @@ const DATA_FILES = [
     {
         prop: "characterData", file: "character-data.json", create: true, seed: () => SEED_CHARACTERS,
         shape: (raw) => {
-            const src = raw && Array.isArray(raw.characters) ? raw.characters : [];
-            const characters = src.map((c) => coerceItem(CHARACTER_SCHEMA, c));
+            const characters = coerceList(CHARACTER_SCHEMA, raw && raw.characters);
             // Active id must point at a surviving character.
             let activeId = raw && typeof raw.activeCharacterId === "string" ? raw.activeCharacterId : null;
             if (!characters.some((c) => c.id === activeId))
@@ -282,8 +286,7 @@ const DATA_FILES = [
     {
         prop: "streamData", file: "stream-data.json", create: true, seed: () => SEED_STREAM,
         shape: (raw) => {
-            const src = raw && Array.isArray(raw.commentSets) ? raw.commentSets : [];
-            return { commentSets: src.map((cs) => coerceItem(COMMENT_SET_SCHEMA, cs)) };
+            return { commentSets: coerceList(COMMENT_SET_SCHEMA, raw && raw.commentSets) };
         },
     },
     {
@@ -295,7 +298,7 @@ const DATA_FILES = [
             return {
                 sysTemplates: strList(raw.sysTemplates),
                 anonTemplates: strList(raw.anonTemplates),
-                vips: (Array.isArray(raw.vips) ? raw.vips : []).map((v) => coerceItem(VIP_SCHEMA, v)),
+                vips: coerceList(VIP_SCHEMA, raw.vips),
                 constants: strMap(raw.constants),
             };
         },
@@ -306,7 +309,7 @@ const DATA_FILES = [
         shape: (raw) => {
             raw = raw || {};
             return {
-                mailTemplates: (Array.isArray(raw.mailTemplates) ? raw.mailTemplates : []).map((m) => coerceItem(MAIL_SCHEMA, m)),
+                mailTemplates: coerceList(MAIL_SCHEMA, raw.mailTemplates),
                 constants: strMap(raw.constants),
             };
         },
@@ -338,67 +341,56 @@ const DATA_FILES = [
         prop: "programData", file: "program-data.json", create: false, seed: () => SEED_PROGRAM,
         shape: (raw) => {
             raw = raw || {};
-            return { programs: (Array.isArray(raw.programs) ? raw.programs : []).map((p) => coerceItem(PROGRAM_SCHEMA, p)) };
+            return { programs: coerceList(PROGRAM_SCHEMA, raw.programs) };
         },
         afterSave: (p) => p.applyChange(),
     },
 ];
 const DATA_FILE_BY_PROP = Object.fromEntries(DATA_FILES.map((d) => [d.prop, d]));
 // data.json holds only scalars + the enable maps; bulky content lives in the DATA_FILES.
-const DEFAULT_SETTINGS = {
-    sidebarSpriteMaxHeight: 300,
-    rootSpriteMaxHeight: 150,
-    rootWalkSpeed: 20,
-    quoteDurationMs: 3000,
-    quoteTypewriter: "off",   // "off" | "slow" | "fast"
-    surpriseChance: 20,
-    animateOnQuote: true,
-    idleEnabled: true,
-    chatterChance: 25,
-    sleepAfterMs: 120000,
-    // ---- stream mode ---- Every feed source's interval pair follows the `<key>MinMs`/`<key>MaxMs` convention (stored ms, drawn at random in [min, max]).
-    streamEnabled: false,
-    // Vault paths or emojis, cycled at a random interval.
-    streamBackgrounds: "🌃",
-    streamBgMinMs: 600000,
-    streamBgMaxMs: 1200000,
-    streamMinMs: 10000,
-    streamMaxMs: 20000,
-    // Comment bubbles kept on screen before the oldest drops.
-    streamHistoryCount: 6,
-    // ---- Oracle mode ----
-    oracleEnabled: false,
-    // Patron is a comma-separated pool, each optionally "Name (Plural)"; blank falls back to ORACLE_SYS_FALLBACK / ORACLE_PATRON_FALLBACK (also the settings placeholders).
-    oracleSystemName: "",
-    oraclePatronName: "",
-    oracleSysMinMs: 20000,
-    oracleSysMaxMs: 45000,
-    oracleAnonMinMs: 15000,
-    oracleAnonMaxMs: 30000,
-    oracleVipMinMs: 12000,
-    oracleVipMaxMs: 25000,
-    // VIP beats consult what you're typing when fresh; off = always ambient topics.
-    oracleVipReactsToTyping: true,
-    // ---- Mail mode ----
-    mailEnabled: false,
-    mailMinMs: 900000, // 15 min
-    mailMaxMs: 2400000, // 40 min
-    // ---- Blog mode ----
-    blogEnabled: false,
-    blogMinMs: 60000, // 1 min
-    blogMaxMs: 180000, // 3 min
-    // ---- News mode ----
-    newsEnabled: false,
-    newsMinMs: 120000, // 2 min
-    newsMaxMs: 360000, // 6 min
-    // Face switch: off = each news beat cues a chyron pass; on = feed bubbles instead.
-    newsToFeed: false,
-    // ---- Miscellaneous ---- CSS font-family strings, empty = keep the styles.css defaults.
-    commentFont: "",       // overrides --cc-stream-font on the comment feed bubbles
-    giftEmojiFont: "",     // font-family for the rained gift emojis
-    // Whitespace-separated emojis the gift button rains; empty = a single 🎁.
-    giftEmojis: "",
-};
+// Scalar settings: one row owns its default and persisted-data coercion.
+const SETTINGS_SCHEMA = [
+    { key: "sidebarSpriteMaxHeight", coerce: bounded(300, 100, 500) },
+    { key: "rootSpriteMaxHeight", coerce: bounded(150, 100, 500) },
+    { key: "rootWalkSpeed", coerce: bounded(20, 10, 50) },
+    { key: "quoteDurationMs", coerce: bounded(3000, 1000, 5000) },
+    { key: "quoteTypewriter", coerce: oneOf("off", ["off", "slow", "fast"]) },
+    { key: "surpriseChance", coerce: bounded(20, 0, 100) },
+    { key: "animateOnQuote", coerce: bool(true) },
+    { key: "idleEnabled", coerce: bool(true) },
+    { key: "chatterChance", coerce: bounded(25, 0, 100) },
+    { key: "sleepAfterMs", coerce: bounded(120000, 60000, 3600000) },
+    { key: "streamEnabled", coerce: bool(false) },
+    { key: "streamBackgrounds", coerce: (v) => typeof v === "string" ? v : "🌃" },
+    { key: "streamBgMinMs", coerce: bounded(600000, 60000, 3600000) },
+    { key: "streamBgMaxMs", coerce: bounded(1200000, 60000, 3600000) },
+    { key: "streamMinMs", coerce: bounded(10000, 5000, 30000) },
+    { key: "streamMaxMs", coerce: bounded(20000, 5000, 30000) },
+    { key: "streamHistoryCount", coerce: integer(6, 1, 15) },
+    { key: "oracleEnabled", coerce: bool(false) },
+    { key: "oracleSystemName", coerce: str },
+    { key: "oraclePatronName", coerce: str },
+    { key: "oracleSysMinMs", coerce: bounded(20000, 5000, 180000) },
+    { key: "oracleSysMaxMs", coerce: bounded(45000, 5000, 180000) },
+    { key: "oracleAnonMinMs", coerce: bounded(15000, 5000, 180000) },
+    { key: "oracleAnonMaxMs", coerce: bounded(30000, 5000, 180000) },
+    { key: "oracleVipMinMs", coerce: bounded(12000, 5000, 180000) },
+    { key: "oracleVipMaxMs", coerce: bounded(25000, 5000, 180000) },
+    { key: "oracleVipReactsToTyping", coerce: bool(true) },
+    { key: "mailEnabled", coerce: bool(false) },
+    { key: "mailMinMs", coerce: bounded(900000, 60000, 3600000) },
+    { key: "mailMaxMs", coerce: bounded(2400000, 60000, 3600000) },
+    { key: "blogEnabled", coerce: bool(false) },
+    { key: "blogMinMs", coerce: bounded(60000, 30000, 1800000) },
+    { key: "blogMaxMs", coerce: bounded(180000, 30000, 1800000) },
+    { key: "newsEnabled", coerce: bool(false) },
+    { key: "newsMinMs", coerce: bounded(120000, 30000, 1800000) },
+    { key: "newsMaxMs", coerce: bounded(360000, 30000, 1800000) },
+    { key: "newsToFeed", coerce: bool(false) },
+    { key: "commentFont", coerce: str },
+    { key: "giftEmojiFont", coerce: str },
+    { key: "giftEmojis", coerce: str },
+];
 // Oracle name fallbacks, doubling as the settings placeholders.
 const ORACLE_SYS_FALLBACK = "Star Stream";
 const ORACLE_PATRON_FALLBACK = "Constellation";
@@ -408,14 +400,12 @@ const FLAG_MAPS = [
     ["enabledEffects", SPECIAL_EFFECT_KEYS, false],
     ["enabledAesthetics", AESTHETIC_KEYS, true],
 ];
-for (const [key, names, def] of FLAG_MAPS)
-    DEFAULT_SETTINGS[key] = boolMap(names, {}, def);
 function genId() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 module.exports = {
     AESTHETICS, ANIMS_BY_ROLE, ANIM_BY_NAME, ANIM_POOLS, CHARACTER_SCHEMA, CHARACTER_TOGGLES,
-    CLEARABLE, COMMENT_SET_SCHEMA, DATA_FILES, DATA_FILE_BY_PROP, DEFAULT_SETTINGS, FLAG_MAPS,
+    CLEARABLE, COMMENT_SET_SCHEMA, DATA_FILES, DATA_FILE_BY_PROP, FLAG_MAPS, SETTINGS_SCHEMA,
     HOLD_SHAKES, MAIL_SCHEMA, ORACLE_PATRON_FALLBACK, ORACLE_SYS_FALLBACK, PROGRAM_SCHEMA,
     SPECIAL_EFFECTS, VIP_SCHEMA, boolMap, newItem, shapeIsEmpty,
 };

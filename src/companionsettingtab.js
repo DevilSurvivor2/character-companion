@@ -412,7 +412,6 @@ class CompanionSettingTab extends PluginSettingTab {
             placeholder: "Attach/bg1.png, Attach/bg2.png",
             get: () => this.plugin.settings.streamBackgrounds,
             set: (v) => (this.plugin.settings.streamBackgrounds = v.trim()),
-            rerender: true,
         });
         new Setting(c)
             .setName("Special effects")

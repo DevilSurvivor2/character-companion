@@ -119,6 +119,14 @@ class Oracle {
     }
     // A VIP's match-list: the reserved `topic` variable in its vars map.
     syms(vip) { return (vip.vars && vip.vars.topic) || []; }
+    // Return the first whole topic-bank phrase present in lemmatised input.
+    matchedTopic(vip, text) {
+        const words = " " + String(text).replace(/[^\p{L}\p{N}]+/gu, " ").trim() + " ";
+        return this.syms(vip).find((topic) => {
+            const term = this.lemma(topic).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+            return term && words.includes(" " + term + " ");
+        }) || "";
+    }
     // Make a word read as a noun for the $topic slot: a bare verb → its gerund, a real noun untouched (natural tagging, no force-tag); the auxiliary compromise prepends ("is killing") is stripped. The single choke point for every $topic source.
     nounify(word) {
         const w = String(word || "").trim();
@@ -181,7 +189,7 @@ class Oracle {
         if (this.editTimer != null) win.clearTimeout(this.editTimer);
         this.editTimer = win.setTimeout(() => this.classify(editor), tuning().oracleDebounce);
     }
-    // Classify the current line to a VIP; store the match only if its confidence clears a multiple of the uniform (1/N) baseline, then pick the topic to echo.
+    // Match one VIP directly; with several, keep only a classifier result clearing the uniform-confidence baseline.
     classify(editor) {
         this.editTimer = null;
         if (!this.clf || !this.enabledVips.length) return;
@@ -189,6 +197,11 @@ class Oracle {
         try { text = editor.getLine(editor.getCursor().line) || ""; } catch { text = ""; }
         const lem = this.lemma(text);
         if (!lem.trim()) return;
+        if (this.enabledVips.length === 1) {
+            const topic = this.matchedTopic(this.enabledVips[0], lem);
+            this.context = topic ? { vipIndex: 0, topic, ts: Date.now() } : null;
+            return;
+        }
         let scores;
         try { scores = this.clf.scores(lem); } catch { return; }
         let best = -1, bestKey = null;
@@ -200,8 +213,7 @@ class Oracle {
         const vip = this.enabledVips[idx];
         if (!vip) return;
         // Echo priority: typed topic-bank word → most recent noun → most recent verb.
-        const words = new Set(lem.split(/\s+/));
-        const topic = this.syms(vip).find((s) => words.has(this.lemma(s)))
+        const topic = this.matchedTopic(vip, lem)
             || this.lastTyped(text, (d) => d.match("#Noun").not("#Pronoun").nouns().toSingular())
             || this.lastTyped(text, (d) => d.verbs().toInfinitive());
         this.context = { vipIndex: idx, topic, ts: Date.now() };

@@ -189,13 +189,27 @@ function buildEffect(anchor, key) {
             n.remove();
     };
 }
-// Run fn as soon as styles.css has landed (tuning() resolves a real number), retrying on rAF until then — surfaces that read --cc-* numbers at build time wait behind this.
+// Run fn once styles.css has landed; returns a cancellation handle for a pending rAF retry.
 function whenStyled(fn) {
-    if (!isNaN(tuning().ease)) {
-        fn();
-        return;
-    }
-    window.requestAnimationFrame(() => whenStyled(fn));
+    let frame = null;
+    let stopped = false;
+    const cancel = () => {
+        stopped = true;
+        if (frame !== null)
+            window.cancelAnimationFrame(frame);
+    };
+    const check = () => {
+        frame = null;
+        if (stopped)
+            return;
+        if (!isNaN(tuning().ease)) {
+            fn();
+            return;
+        }
+        frame = window.requestAnimationFrame(check);
+    };
+    check();
+    return cancel;
 }
 // True only while the MAIN window is foreground and focused (a focused popout counts as away — the plugin doesn't run in popouts).
 function appActive() {

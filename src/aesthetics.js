@@ -7,7 +7,7 @@ const BOTTOM_OCCUPANTS = [
     // Stream: the fake react bar — the bar's resting holder.
     { key: "stream", wants: (a) => a.settings.streamEnabled && !!a.settings.enabledAesthetics.react, build: (a, bar) => a.buildReactBar(bar) },
     // (Roleplay/game mode slots in between stream and news when it lands.) News: the chyron — pure display, no timer; wants the bar only while a pass is in flight.
-    { key: "news", wants: (a) => a.chyronOn, build: (a, bar) => a.buildChyron(bar), liveOnly: true },
+    { key: "news", wants: (a) => a.settings.streamEnabled && a.settings.newsEnabled && !a.settings.newsToFeed && a.chyronOn, build: (a, bar) => a.buildChyron(bar), liveOnly: true },
     // Program: an airing's content, one line at a time; the sequence ends the airing.
     { key: "program", wants: (a) => !!a.view.program, build: (a, bar) => a.buildProgram(bar), liveOnly: true },
 ];
@@ -30,6 +30,7 @@ class Aesthetics {
         // chyronOn marks a pass in flight; chyronAnim is the scroll, kept after finishing — its "both" fill holds the strip off-screen through the bar's fade-out.
         this.chyronOn = false;
         this.chyronAnim = null;
+        this.particles = new Set();
     }
     get settings() { return this.plugin.settings; }
     syncTimer(handle, on, range, fire) {
@@ -60,7 +61,7 @@ class Aesthetics {
             this.bottomEls[row.key] = row.build(this, bar);
         this.bottomKey = null;
         els.fx = els.root.createDiv({ cls: "cc-aes-fx" });
-        this.resetCounters();
+        this.renderCounters();
     }
     // Reconcile ticker visibility, the bottom bar, and the two sync-gated ticker timers.
     sync() {
@@ -70,6 +71,7 @@ class Aesthetics {
         els.root.setCssProps({ "--cc-stream-font": this.settings.commentFont || "" });
         const streaming = this.settings.streamEnabled;
         const en = this.settings.enabledAesthetics;
+        const live = this.view.isLive();
         const show = (key) => streaming && !!en[key];
         // The wrapper shows if any piece (ticker or bottom-bar occupant) does.
         let any = false;
@@ -84,7 +86,6 @@ class Aesthetics {
         any = this.syncBottom() || any;
         els.root.classList.toggle("cc-aes-show", any);
         // Run the two ticker timers while live + shown, freeze otherwise (fixed-interval, so lo === hi).
-        const live = this.view.isLive();
         this.syncTimer("uptimeStop", live && show("uptime"), () => ({ lo: 1000, hi: 1000 }), () => {
             this.uptimeS += 1;
             this.renderCounters();
@@ -100,6 +101,8 @@ class Aesthetics {
         });
         if (show("status"))
             this.updateStatus();
+        if (!live || !show("react"))
+            this.clearParticles();
     }
     // Hand the bottom bar to the LAST wanting, live-eligible row: stop the loser, toggle cc-hijack-hidden, then run the winner's start() — last, because it may re-enter this sync (a program whose every line is unrenderable ends the airing synchronously). Returns whether any row holds the bar.
     syncBottom() {
@@ -151,7 +154,7 @@ class Aesthetics {
     }
     // One chyron pass, cued by each news feed beat (the news interval is the only cadence). `strip` is lazy: a beat landing mid-pass or mid-airing is skipped before it runs. The pass hijacks the bar, scrolls once via WAAPI, hands the bar back on finish; the scroll's delay covers the fade-in, and the "both" fill parks the strip off-screen on both sides of the run so nothing snaps back into view.
     chyronPass(strip) {
-        if (!this.els || this.chyronOn || this.view.program)
+        if (!this.els || !this.view.isLive() || !this.settings.streamEnabled || !this.settings.newsEnabled || this.settings.newsToFeed || this.chyronOn || this.view.program)
             return;
         const text = strip();
         if (!text)
@@ -247,20 +250,38 @@ class Aesthetics {
     teardown() {
         this.syncTimer("uptimeStop", false);
         this.syncTimer("viewerStop", false);
+        this.clearParticles();
         if (this.bottomKey)
             this.bottomEls[this.bottomKey].stop?.();
         this.bottomKey = null;
         this.bottomEls = null;
         this.els = null;
     }
-    // Spawn one WAAPI particle into the fx layer. build(layer, t) returns { el, frames, duration (seconds), easing }; the particle self-removes when the animation finishes.
+    // Cancel and remove every live particle.
+    clearParticles() {
+        for (const particle of this.particles) {
+            particle.anim.onfinish = null;
+            particle.anim.oncancel = null;
+            particle.anim.cancel();
+            particle.el.remove();
+        }
+        this.particles.clear();
+    }
+    // Spawn one tracked WAAPI particle into the fx layer. build(layer, t) returns { el, frames, duration (seconds), easing }.
     spawnParticle(build) {
         const layer = this.els && this.els.fx;
-        if (!layer)
+        if (!layer || !this.view.isLive() || !this.settings.streamEnabled || !this.settings.enabledAesthetics.react)
             return;
         const { el, frames, duration, easing } = build(layer, tuning());
         const anim = el.animate(frames, { duration: duration * 1000, easing, fill: "forwards" });
-        anim.onfinish = () => el.remove();
+        const particle = { anim, el };
+        const done = () => {
+            this.particles.delete(particle);
+            el.remove();
+        };
+        this.particles.add(particle);
+        anim.onfinish = done;
+        anim.oncancel = done;
     }
     // A "like" heart: rolled size/opacity (mostly grey, some pink), rising on a snaking trail while fading out.
     spawnHeart() {

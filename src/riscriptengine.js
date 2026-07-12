@@ -11,6 +11,8 @@ const RAND_CHARS = {
 };
 // $kind<lo> or $kind<lo-hi>, kind = num | let | mix, each letter kind with an optional -lower/-upper suffix.
 const RAND_TOKEN = /\$((?:let|mix)(?:-lower|-upper)?|num)<\s*(\d+)\s*(?:-\s*(\d+)\s*)?>/gi;
+const TEMPLATE_SYNTAX = /(^|[^A-Za-z0-9_])\$[A-Za-z_][\w-]*|\[[^\]\r\n]*\|/;
+const LITERAL_TILDE = "\uE000", LITERAL_CARET = "\uE001";
 class RiScriptEngine {
     constructor(plugin) {
         this.plugin = plugin;
@@ -90,9 +92,9 @@ class RiScriptEngine {
             name += randStr(RAND_CHARS.num, randInt(t.blogHandleDigitMin, t.blogHandleDigitMax));
         return name || "someone";
     }
-    // True = "skip this beat": a line with RiScript syntax ([ or $) can't render until RiTa loads, so a source waits rather than pushing raw $vars.
+    // True = "skip this beat": a templated line can't render until RiTa loads.
     pending(line) {
-        return /[[$]/.test(line) && !this.loaded;
+        return TEMPLATE_SYNTAX.test(String(line)) && !this.loaded;
     }
     // Pre-pass before the RiScript grammar: expand every $num/$let/$mix<lo-hi> filler (a missing hi means exact length), and every $handle into a fresh random username.
     expandRandom(line) {
@@ -102,12 +104,17 @@ class RiScriptEngine {
             return randStr(RAND_CHARS[kind.toLowerCase()], randInt(lo, hi));
         });
     }
-    // Evaluate one RiScript line against fresh generics + the transforms + the caller's context. Returns the raw line unchanged on a parse error or unloaded engine, so a bad template can never throw out of a timer.
+    // Evaluate one templated line; plain text bypasses RiTa and invalid templates are skipped.
     evaluate(line, extra) {
-        if (!this.RiTa) return line;
-        const expanded = this.expandRandom(line);
-        try { return this.RiTa.evaluate(expanded, Object.assign({}, this.generic(), this.transforms, extra)); }
-        catch { return line; }
+        const source = String(line ?? "");
+        if (!TEMPLATE_SYNTAX.test(source)) return source;
+        if (!this.RiTa) return "";
+        const expanded = this.expandRandom(source).replaceAll("~", LITERAL_TILDE).replaceAll("^", LITERAL_CARET);
+        try {
+            return this.RiTa.evaluate(expanded, Object.assign({}, this.generic(), this.transforms, extra))
+                .replaceAll(LITERAL_TILDE, "~").replaceAll(LITERAL_CARET, "^");
+        }
+        catch { return ""; }
     }
     // evaluate() coerced to a trimmed string ("" on a null/blank result).
     evalTrim(line, extra) {

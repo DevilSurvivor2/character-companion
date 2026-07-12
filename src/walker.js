@@ -102,13 +102,17 @@ class Walker {
         this.imgEl.addEventListener("pointerup", (e) => this.onUp(e));
         this.imgEl.addEventListener("pointercancel", (e) => this.onCancel(e));
         // On each load, cache the half-width (no per-frame reflow) and re-anchor the bubble.
-        this.imgEl.addEventListener("load", () => { this.halfWidth = this.imgEl.offsetWidth / 2; this.applyBubbleInset(); });
+        this.imgEl.addEventListener("load", () => this.measure());
         this.setSprite(this.spriteBag.next(urls));
         // A cached/data-URL sprite can complete synchronously with no load event.
         if (this.imgEl.complete && this.imgEl.offsetWidth)
-            this.halfWidth = this.imgEl.offsetWidth / 2;
+            this.measure();
     }
     get settings() { return this.plugin.settings; }
+    measure() {
+        this.halfWidth = this.imgEl.offsetWidth / 2;
+        this.applyBubbleInset();
+    }
     place() {
         this.wrapEl.setCssProps({ "--cc-x": this.x + "px", "--cc-y": this.yOffset + "%" });
     }

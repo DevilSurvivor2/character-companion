@@ -58,11 +58,15 @@ class CompanionStage {
     }
     // Restart the loop (lastFrame stays null so tick skips the first dt — no jump after a long pause) and re-arm any resting walker, whose window timer pause cleared.
     resume() {
-        if (this.raf === null)
-            this.raf = this.win.requestAnimationFrame(this.tick);
+        if (this.walkers.size === 0) {
+            this.pause();
+            return;
+        }
+        if (this.raf !== null)
+            return;
+        this.raf = this.win.requestAnimationFrame(this.tick);
         for (const w of this.walkers.values())
-            if (w.mode === MODE.REST)
-                w.beginRest();
+            w.resumeRest();
     }
     sync() {
         if (appActive())
@@ -123,6 +127,9 @@ class CompanionStage {
         // Re-deal stacking depth only on a cast change.
         if (changed)
             this.shuffleLayers();
+        for (const w of this.walkers.values())
+            w.measure();
+        this.sync();
     }
     createWalker(character, urls, speed) {
         const wrap = this.stageEl.createDiv({ cls: "cc-walker" });
@@ -137,6 +144,11 @@ class CompanionStage {
         return w;
     }
     tick(now) {
+        if (this.walkers.size === 0) {
+            this.raf = null;
+            this.lastFrame = null;
+            return;
+        }
         this.raf = this.win.requestAnimationFrame(this.tick);
         if (this.lastFrame === null) {
             this.lastFrame = now;
@@ -264,6 +276,7 @@ class CompanionStage {
     onResize() {
         const { lo, hi } = this.restBand();
         for (const w of this.walkers.values()) {
+            w.measure();
             if (w.mode === MODE.HELD)
                 continue;
             if (w.x < lo)

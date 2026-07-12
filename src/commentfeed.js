@@ -13,13 +13,6 @@ function renderInline(el, text) {
         el.createSpan({ cls: seg.slice(0, sep), text: seg.slice(sep + 1) });
     });
 }
-// Split a news headline into { section, body } on its optional leading [SECTION] label. Only the leading group is structural — a later [a | b] stays a RiScript choice.
-function parseNewsLine(raw) {
-    const m = /^\s*\[([^\]]*)\]\s*/.exec(raw || "");
-    return m
-        ? { section: m[1].trim(), body: raw.slice(m[0].length).trim() }
-        : { section: "", body: (raw || "").trim() };
-}
 // Chat overlay pinned to the root-split corner nearest the panel. Owns no timer/content — exposes push() for independent sources. Newest at corner, older bump away.
 class CommentFeed {
     constructor(view) {
@@ -95,4 +88,4 @@ class CommentFeed {
             (top ? this.el.lastElementChild : this.el.firstElementChild).remove();
     }
 }
-module.exports = { CommentFeed, feedSpan, parseNewsLine };
+module.exports = { CommentFeed, feedSpan };

@@ -1,7 +1,7 @@
 "use strict";
 // Entry point: wires the view, ribbon + command, settings tab, the stage, and the generic sibling-data-file load/save.
 const { Notice, Plugin } = require("obsidian");
-const { DATA_FILES, DATA_FILE_BY_PROP, DEFAULT_SETTINGS, FLAG_MAPS, boolMap, shapeIsEmpty } = require("./registries.js");
+const { DATA_FILES, DATA_FILE_BY_PROP, FLAG_MAPS, SETTINGS_SCHEMA, boolMap, shapeIsEmpty } = require("./registries.js");
 const { whenStyled } = require("./toolkit.js");
 const { RiScriptEngine } = require("./riscriptengine.js");
 const { CompanionStage } = require("./companionstage.js");
@@ -25,7 +25,7 @@ class CharacterCompanionPlugin extends Plugin {
         this.addSettingTab(new CompanionSettingTab(this.app, this));
         this.stage = new CompanionStage(this);
         this.app.workspace.onLayoutReady(() => {
-            whenStyled(() => this.stage.mount());
+            this.register(whenStyled(() => this.stage.mount()));
             if (this.firstRun)
                 this.welcome();
         });
@@ -63,24 +63,16 @@ class CharacterCompanionPlugin extends Plugin {
         // No data.json yet = a genuine first run; the welcome nudge keys off this.
         const raw = await this.loadData();
         this.firstRun = raw == null;
-        const loaded = raw ?? {};
-        const s = Object.assign({}, DEFAULT_SETTINGS);
-        // Copy the scalar settings, dropping unknowns; the object-typed defaults are the enable maps, rebuilt below per FLAG_MAPS.
-        for (const k of Object.keys(DEFAULT_SETTINGS)) {
-            const def = DEFAULT_SETTINGS[k];
-            if (def !== null && typeof def === "object")
-                continue;
-            if (loaded[k] !== undefined)
-                s[k] = loaded[k];
-        }
+        const loaded = raw && typeof raw === "object" && !Array.isArray(raw) ? Object.assign({}, raw) : {};
         // Migrate the pre-tri-state quoteTypewriter boolean to the string form.
-        if (typeof s.quoteTypewriter === "boolean")
-            s.quoteTypewriter = s.quoteTypewriter ? "slow" : "off";
+        if (typeof loaded.quoteTypewriter === "boolean")
+            loaded.quoteTypewriter = loaded.quoteTypewriter ? "slow" : "off";
         // Migrate the pre-rename stream interval keys to the `<key>MinMs`/`<key>MaxMs` convention.
         if (typeof loaded.streamCommentMinMs === "number")
-            s.streamMinMs = loaded.streamCommentMinMs;
+            loaded.streamMinMs = loaded.streamCommentMinMs;
         if (typeof loaded.streamCommentMaxMs === "number")
-            s.streamMaxMs = loaded.streamCommentMaxMs;
+            loaded.streamMaxMs = loaded.streamCommentMaxMs;
+        const s = Object.fromEntries(SETTINGS_SCHEMA.map(({ key, coerce }) => [key, coerce(loaded[key])]));
         // Re-normalise each enable map: keep known flags, default new names.
         for (const [key, names, def] of FLAG_MAPS)
             s[key] = boolMap(names, loaded[key], def);

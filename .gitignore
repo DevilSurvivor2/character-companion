@@ -8,6 +8,7 @@ news-data.json
 program-data.json
 oracle-data.json
 CLAUDE.md
+AGENTS.md
 
 # Corruption backups written by readJsonFile
 *.bak

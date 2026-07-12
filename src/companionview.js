@@ -3,7 +3,7 @@ const { ItemView, Notice, setIcon } = require("obsidian");
 const { SPECIAL_EFFECTS } = require("./registries.js");
 const { Bag, appActive, buildEffect, choiceRules, commaList, pick, randInt, reconcileTimer, resolvePathList, tuning, whenStyled } = require("./toolkit.js");
 const { Walker } = require("./walker.js");
-const { CommentFeed, parseNewsLine } = require("./commentfeed.js");
+const { CommentFeed } = require("./commentfeed.js");
 const { Aesthetics } = require("./aesthetics.js");
 const { Oracle } = require("./oracle.js");
 // Sidebar-panel action buttons: run(view) is the click, active(view) lights it as a toggle.
@@ -42,6 +42,13 @@ const FEED_SOURCES = [
         push: (v, raw) => v.pushNews(raw),
     },
 ];
+// Split a news headline's optional leading [SECTION]; later [a | b] remains a RiScript choice.
+function parseNewsLine(raw) {
+    const m = /^\s*\[([^\]]*)\]\s*/.exec(raw || "");
+    return m
+        ? { section: m[1].trim(), body: raw.slice(m[0].length).trim() }
+        : { section: "", body: (raw || "").trim() };
+}
 const VIEW_TYPE_COMPANION = "character-companion-view";
 // Sidebar panel: a single stage-less Walker drawn from sidebar-enabled characters. Owns the icon column, stream background, comment feed, and sprite liveness.
 class CompanionView extends ItemView {
@@ -54,6 +61,7 @@ class CompanionView extends ItemView {
         this.resizeObserver = null;
         // The window the panel was last rendered in; onLayoutChange re-renders when the leaf crosses a window boundary.
         this.renderWin = null;
+        this.styledStop = null;
         this.feed = new CommentFeed(this);
         // Each FEED_SOURCES row owns its own timer (stop handle) and non-repeat bag.
         for (const { key } of FEED_SOURCES) {
@@ -99,6 +107,8 @@ class CompanionView extends ItemView {
         this.render();
     }
     async onClose() {
+        if (this.styledStop)
+            this.styledStop();
         this.cleanupWalker();
         this.aesthetics.teardown();
         this.teardownStream();
@@ -305,7 +315,7 @@ class CompanionView extends ItemView {
     charCtx(vars) {
         return Object.assign({}, this.streamCtx(), choiceRules(vars));
     }
-    // Character template vars with safe defaults. Pronouns: slash-sep -> $they/$them/$their (optional 4th/5th -> $theirs/$themself).
+    // Character template vars with safe defaults. Pronouns are slash-separated in subject/object/possessive forms.
     streamCtx() {
         const c = this.getActiveCharacter();
         const name = (c && c.name && c.name.trim()) || "The streamer";
@@ -314,12 +324,12 @@ class CompanionView extends ItemView {
         const topics = (c && c.topics && c.topics.length) ? c.topics : ["the stream"];
         const epithets = commaList(c && c.epithet);
         const roles = commaList(c && c.role);
+        const they = pr[0] || "they", them = pr[1] || they || "them", their = pr[2] || them || "their";
         const ctx = {
-            name,
-            they: pr[0] || "they", them: pr[1] || pr[0] || "them", their: pr[2] || pr[1] || "their",
+            name, they, them, their,
+            theirs: pr[3] || (their === "his" ? "his" : their + "s"),
+            themself: pr[4] || them + "self",
         };
-        if (pr[3]) ctx.theirs = pr[3];
-        if (pr[4]) ctx.themself = pr[4];
         return Object.assign(ctx, choiceRules({
             deed: deeds, topic: topics,
             epithet: epithets.length ? epithets : [name],
@@ -414,7 +424,9 @@ class CompanionView extends ItemView {
         }
     }
     render() {
-        whenStyled(() => this.renderNow());
+        if (this.styledStop)
+            this.styledStop();
+        this.styledStop = whenStyled(() => this.renderNow());
     }
     renderNow() {
         const root = this.contentEl;

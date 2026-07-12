@@ -63,7 +63,7 @@
     color: var(--text-normal);
     opacity: 1;
 }
-.cc-root:has(.cc-anchor.cc-streaming, .cc-anchor.cc-program) .cc-icon-btn:not(.cc-icon-active:hover) .svg-icon {
+.cc-root:has(.cc-anchor.cc-streaming, .cc-anchor.cc-program) .cc-icon-btn:not(.cc-icon-active) .svg-icon {
     filter:
         drop-shadow(0 0 0px var(--text-normal)) 
         drop-shadow(0 0 1px var(--background-primary));
