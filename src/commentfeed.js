@@ -1,17 +1,7 @@
 "use strict";
-// Inline-span protocol: control chars carry "this run is a styled <span>" through the plain-string pipeline (RiScript eval + emit's punctuation pass). A wrapped run is FEED_SPAN cls FEED_SPAN_SEP text FEED_SPAN; feedSpan produces, renderInline consumes.
-const FEED_SPAN = String.fromCharCode(0x1f);      // toggles a plain ↔ span run
-const FEED_SPAN_SEP = String.fromCharCode(0x1e);  // separates a run's class from its text
-function feedSpan(text, cls = "cc-feed-modifier") {
-    return FEED_SPAN + cls + FEED_SPAN_SEP + text + FEED_SPAN;
-}
-function renderInline(el, text) {
-    String(text).split(FEED_SPAN).forEach((seg, i) => {
-        if (!seg) return;
-        if (!(i % 2)) return void el.appendText(seg);   // even segments are plain text
-        const sep = seg.indexOf(FEED_SPAN_SEP);
-        el.createSpan({ cls: seg.slice(0, sep), text: seg.slice(sep + 1) });
-    });
+function renderRuns(el, runs) {
+    for (const run of runs)
+        run.cls ? el.createSpan({ cls: run.cls, text: run.text }) : el.appendText(run.text);
 }
 // Chat overlay pinned to the root-split corner nearest the panel. Owns no timer/content — exposes push() for independent sources. Newest at corner, older bump away.
 class CommentFeed {
@@ -59,21 +49,22 @@ class CommentFeed {
             "--cc-feed-y": (top ? rect.top : win.innerHeight - rect.bottom) + "px",
         });
     }
-    // Add a bubble at the anchored corner. parts: plain string or [{cls, text}] array. Named parts get cc-feed-part-X classes, joined by <br>.
+    // Add a bubble at the anchored corner. parts: plain string or [{cls, text|runs}] array. Named parts get cc-feed-part-X classes, joined by <br>.
     push(parts, extraCls) {
         const list = Array.isArray(parts) ? parts : [{ text: parts }];
-        if (!list.some((p) => p.text) || !this.el)
+        if (!list.some((p) => p.text || p.runs?.some((run) => run.text)) || !this.el)
             return;
         const top = this.el.classList.contains("cc-feed-top");
         const bubble = this.el.createDiv({ cls: "cc-feed-bubble" });
         let first = true;
         for (const p of list) {
-            if (!p.text)
+            if (!p.text && !p.runs?.some((run) => run.text))
                 continue;
             if (!first)
                 bubble.createEl("br");
             first = false;
-            renderInline(p.cls ? bubble.createSpan({ cls: "cc-feed-part-" + p.cls }) : bubble, p.text);
+            const el = p.cls ? bubble.createSpan({ cls: "cc-feed-part-" + p.cls }) : bubble;
+            p.runs ? renderRuns(el, p.runs) : el.appendText(p.text);
         }
         if (extraCls)
             bubble.classList.add(extraCls);
@@ -88,4 +79,4 @@ class CommentFeed {
             (top ? this.el.lastElementChild : this.el.firstElementChild).remove();
     }
 }
-module.exports = { CommentFeed, feedSpan };
+module.exports = { CommentFeed };

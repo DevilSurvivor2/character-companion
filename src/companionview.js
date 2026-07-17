@@ -233,10 +233,8 @@ class CompanionView extends ItemView {
     // One stream beat: evaluate the drawn line against the character context + its own set's variables, push. Unloaded engine -> skip beat.
     pushComment(item) {
         if (!item) return;
-        const R = this.plugin.riscript;
-        if (R.pending(item.text)) return;
         const ctx = this.charCtx(item.set.vars);
-        const line = R.evalTrim(item.text, ctx);
+        const line = this.plugin.riscript.evalTrim(item.text, ctx);
         if (line) this.feed.push(line);
     }
     // Evaluate a mail template's header plus one blank-line-delimited content episode, push as a structured bubble.
@@ -378,7 +376,7 @@ class CompanionView extends ItemView {
             this.syncTimer(key + "Stop", false);
         this.syncTimer("bgStop", false);
         this.syncTimer("showStop", false);
-        this.endShow();
+        this.show = null;
         this.oracle.unmount();
         this.feed.unmount();
         this.teardownEffects();

@@ -17,9 +17,7 @@ const LITERAL_TILDE = "\uE000", LITERAL_CARET = "\uE001", LITERAL_DOLLAR = "\uE0
 const maskDollar = (line) => line.replaceAll("\\$", LITERAL_DOLLAR);
 const restoreLiterals = (line) => line.replaceAll(LITERAL_TILDE, "~").replaceAll(LITERAL_CARET, "^").replaceAll(LITERAL_DOLLAR, "$");
 class RiScriptEngine {
-    constructor(plugin) {
-        this.plugin = plugin;
-        this.app = plugin.app;
+    constructor() {
         this.RiTa = null;
         this.nlp = null;
         this.loaded = false;

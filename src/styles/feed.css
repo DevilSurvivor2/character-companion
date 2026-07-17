@@ -70,43 +70,33 @@
     border-color: var(--interactive-accent);
     color: var(--text-normal);
 }
-/* Inline-highlighted run inside a bubble (currently the VIP's quoted patron modifier). Restyle freely — weight/colour/etc. */
-.cc-feed-modifier {
+/* Inline-highlighted VIP modifier and blog handle. */
+.cc-feed-modifier,
+.cc-feed-part-handle {
     font-weight: 600;
     color: var(--interactive-accent);
 }
 
-/* Mail mode: multi-part bubble (title/from/to/content). */
-.cc-feed-bubble-mail {
+/* Mail and blog use full-width, accent-bordered cards. */
+.cc-feed-bubble-mail,
+.cc-feed-bubble-blog {
     border-color: var(--interactive-accent);
     width: 100%;
 }
-.cc-feed-part-title {
+/* Mail titles and news bodies carry the same emphasis. */
+.cc-feed-part-title,
+.cc-feed-bubble-news .cc-feed-part-body {
     font-weight: 600;
 }
 .cc-feed-part-from,
-.cc-feed-part-to {
+.cc-feed-part-to,
+.cc-feed-part-tags {
     color: var(--text-muted);
     font-size: 0.85em;
 }
 .cc-feed-part-content {
     display: block;
     margin-top: 4px;
-}
-
-/* Blog mode: multi-part microblog bubble (handle / body / tags). */
-.cc-feed-bubble-blog {
-    border-color: var(--interactive-accent);
-    width: 100%;
-}
-.cc-feed-part-handle {
-    font-weight: 600;
-    color: var(--interactive-accent);
-}
-/* Tags read as a muted footer, tight under the body. */
-.cc-feed-part-tags {
-    color: var(--text-muted);
-    font-size: 0.85em;
 }
 
 /* News mode: headline bubble — an optional [Section] label chip above the headline body. */
@@ -125,8 +115,4 @@
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-}
-/* Scoped to news — the "body" part class is shared with blog, which stays un-bolded. */
-.cc-feed-bubble-news .cc-feed-part-body {
-    font-weight: 600;
 }

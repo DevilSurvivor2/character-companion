@@ -34,13 +34,11 @@ class CompanionStage {
         this.plugin.registerDomEvent(this.win, "blur", () => this.sync());
         this.plugin.registerDomEvent(this.win, "focus", () => this.sync());
         this.plugin.registerDomEvent(doc, "visibilitychange", () => this.sync());
-        this.sync();
     }
     unmount() {
         this.pause();
         for (const w of this.walkers.values())
             this.destroyWalker(w);
-        this.walkers.clear();
         if (this.stageEl) {
             this.stageEl.remove();
             this.stageEl = null;
@@ -79,6 +77,7 @@ class CompanionStage {
         w.destroy();
         for (const o of this.walkers.values())
             this.layered.delete(this.pairKey(w, o));
+        this.walkers.delete(w.id);
     }
     // Reconcile walkers against current settings without disturbing the ones that stay.
     refresh() {
@@ -96,7 +95,6 @@ class CompanionStage {
         for (const [id, w] of this.walkers) {
             if (!wanted.has(id)) {
                 this.destroyWalker(w);
-                this.walkers.delete(id);
                 changed = true;
             }
         }
@@ -117,7 +115,6 @@ class CompanionStage {
             w.speed = speed;
             if (urls.length === 0) {
                 this.destroyWalker(w);
-                this.walkers.delete(c.id);
                 changed = true;
                 continue;
             }
@@ -138,8 +135,6 @@ class CompanionStage {
         const img = wrap.createEl("img", { cls: "cc-sprite" });
         const bubble = wrap.createDiv({ cls: "cc-bubble" });
         const w = new Walker(this, this.plugin, character, { wrapEl: wrap, imgEl: img, bubbleEl: bubble }, urls, speed);
-        // Provisional top rank; shuffleLayers re-deals on refresh.
-        this.bringToFront(w);
         w.place();
         // Rest ends on a window timer, so a fresh walker needs one planted.
         w.beginRest();

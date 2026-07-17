@@ -12,7 +12,7 @@ const { SettingTab } = require("./settingtab.js");
 class CharacterCompanionPlugin extends Plugin {
     async onload() {
         await this.loadSettings();
-        this.riscript = new RiScriptEngine(this);
+        this.riscript = new RiScriptEngine();
         this.registerView(VIEW_TYPE_COMPANION, (leaf) => new CompanionView(leaf, this));
         this.addRibbonIcon("ghost", "Open character companion", () => {
             void this.activateView();
@@ -104,7 +104,7 @@ class CharacterCompanionPlugin extends Plugin {
             return false;
         }
         const path = this.manifest.dir + "/" + desc.file;
-        await this.queueWrite(() => this.writeJsonFile(path, this[prop]));
+        await this.queueWrite(() => this.app.vault.adapter.write(path, JSON.stringify(this[prop], null, 2)));
         if (desc.afterSave)
             desc.afterSave(this, rerender);
         return true;
@@ -132,9 +132,6 @@ class CharacterCompanionPlugin extends Plugin {
             new Notice("Character Companion: " + path.split("/").pop() + " contains invalid JSON. " + backup + " It will not be overwritten; repair it and reload the plugin.", 12000);
             return { data: null, existed: true, writable: false };
         }
-    }
-    async writeJsonFile(path, obj) {
-        await this.app.vault.adapter.write(path, JSON.stringify(obj, null, 2));
     }
     // Serialize every save; swallowing only the prior failure keeps the next attempt available.
     queueWrite(write) {

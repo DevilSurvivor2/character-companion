@@ -16,12 +16,8 @@ const HELD_ACTIVITIES = [
 // Total run time (ms) of the element's CSS animation: duration × iteration count. Relies on the animations.css rule that every cc-anim class declares exactly ONE animation.
 function animationDurationMs(el) {
     const cs = el.win.getComputedStyle(el);
-    const longest = (cs.animationDuration || "0s")
-        .split(",")
-        .reduce((max, part) => Math.max(max, parseFloat(part) || 0), 0) * 1000;
-    const iterRaw = (cs.animationIterationCount || "1").split(",")[0].trim();
-    const iter = iterRaw === "infinite" ? 1 : parseFloat(iterRaw) || 1;
-    return longest * iter;
+    const iterations = cs.animationIterationCount === "infinite" ? 1 : parseFloat(cs.animationIterationCount) || 1;
+    return (parseFloat(cs.animationDuration) || 0) * iterations * 1000;
 }
 // A role's enabled animations; rootOnly excludes root:false moves.
 function enabledList(settings, role, rootOnly) {

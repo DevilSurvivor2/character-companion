@@ -2,7 +2,6 @@
 const { Notice } = require("obsidian");
 const { ORACLE_PATRON_FALLBACK, ORACLE_SYS_FALLBACK } = require("./registries.js");
 const { Bag, choiceRules, commaList, pick, randomInterval, tuning } = require("./toolkit.js");
-const { feedSpan } = require("./commentfeed.js");
 // Oracle: independent feed mode, three message types (SYSTEM/ANON/VIP) generated locally. RiTa = grammar+inflection, compromise = lemmatise input, whichx = classify typed text to a VIP. Only VIP consults typing. Desktop-only.
 class Oracle {
     constructor(view) {
@@ -13,7 +12,7 @@ class Oracle {
         this.WhichX = null;
         this.loaded = false; this.loadFailed = false;
         this.sysBag = new Bag(); this.anonBag = new Bag();
-        this.reactionBags = {}; this.asideBags = {};
+        this.vipBags = {};
         // Stop-handles for the three independent source timers.
         this.stops = [];
         // Classifier, the enabled-VIP list it was trained against (index alignment), and the freshest typed-text match { vipIndex, topic, ts }.
@@ -64,7 +63,7 @@ class Oracle {
     // Rebuild derived state after a content edit: snapshot the enabled VIPs (index-aligned classifier labels), retrain whichx on each one's lemmatised topic bank, precompute the shared constant choice-rules. Cheap — safe on every save.
     rebuild() {
         if (!this.loaded) return;
-        this.reactionBags = {}; this.asideBags = {};
+        this.vipBags = {};
         this.enabledVips = this.data.vips.filter((v) => v.enabled);
         this.clf = new this.WhichX();
         if (this.enabledVips.length) {
@@ -154,10 +153,11 @@ class Oracle {
         return this.plugin.riscript.evaluate(line, Object.assign({}, this.staticCtx, extra));
     }
     // Push a finished line, guaranteeing terminal punctuation.
-    emit(text, cls) {
+    emit(text, cls, prefix) {
         const s = (text || "").trim();
         if (!s) return;
-        this.view.feed.push(/[.!?…][)"'”’\]]?$/.test(s) ? s : s + ".", cls);
+        const finished = /[.!?…][)"'”’\]]?$/.test(s) ? s : s + ".";
+        this.view.feed.push(prefix ? [{ runs: [...prefix, { text: finished }] }] : finished, cls);
     }
     // SYSTEM and ANON differ only by bag, template list, and bubble class.
     pushPlain(bag, templates, cls) {
@@ -176,18 +176,23 @@ class Oracle {
         const patron = vip.origin || this.drawPatron().singular;
         // `topic` is assigned AFTER choiceRules so the beat's chosen echo wins over the raw vars.topic choice-rule (which would re-pick per reference).
         const vipCtx = Object.assign(choiceRules(vip.vars), { patron, modifier: vip.modifier || vip.name, topic });
-        // Sentence 1 carries the JS-built prefix (quoted modifier via feedSpan); follow-ups are bare asides. Only the reaction needs the engine.
-        const reaction = this.evaluate((this.reactionBags[vip.name] ??= new Bag()).next(vip.reactions), vipCtx);
+        const bags = (this.vipBags[vip.id] ??= { reaction: new Bag(), aside: new Bag() });
+        // Sentence 1 carries the JS-built prefix with a styled quoted modifier; follow-ups are bare asides. Only the reaction needs the engine.
+        const reaction = this.evaluate(bags.reaction.next(vip.reactions), vipCtx);
         if (!reaction)
             return;
-        let line = `The ${patron} ${feedSpan(`"${vipCtx.modifier}"`)} ${reaction}.`;
+        let line = reaction + ".";
         if (vip.asides.length) {
             const r = Math.random(), t = tuning();
-            const aside = () => " " + this.evaluate((this.asideBags[vip.name] ??= new Bag()).next(vip.asides), vipCtx);
+            const aside = () => " " + this.evaluate(bags.aside.next(vip.asides), vipCtx);
             if (r < t.oracleAside2Chance) line += aside();
             if (r < t.oracleAside3Chance) line += aside();
         }
-        this.emit(line, "cc-feed-bubble-vip");
+        this.emit(line, "cc-feed-bubble-vip", [
+            { text: `The ${patron} ` },
+            { cls: "cc-feed-modifier", text: `"${vipCtx.modifier}"` },
+            { text: " " },
+        ]);
     }
     // --- input → VIP context ---
     onEdit(editor) {

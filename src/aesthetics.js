@@ -199,8 +199,7 @@ class Aesthetics {
         const evalEntry = (line, character) => {
             if (!line)
                 return "";
-            const R = this.plugin.riscript;
-            return R.pending(line) ? "" : R.evalTrim(line, this.view.charCtx(this.plugin.roleplayData.tables, character));
+            return this.plugin.riscript.evalTrim(line, this.view.charCtx(this.plugin.roleplayData.tables, character));
         };
         // One roll: a fresh draw from the table.
         const roll = (name, character) => {
@@ -360,11 +359,8 @@ class Aesthetics {
                 const step = () => {
                     // Advance to the next renderable line.
                     let text = "";
-                    while (i < lines.length && !text) {
-                        const raw = lines[i++];
-                        if (!R.pending(raw))
-                            text = R.evalTrim(raw, ctx);
-                    }
+                    while (i < lines.length && !text)
+                        text = R.evalTrim(lines[i++], ctx);
                     if (!text) {
                         this.view.endShow();
                         return;

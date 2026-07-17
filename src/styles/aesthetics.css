@@ -132,7 +132,9 @@
 .cc-aes-btn:hover {
     opacity: 0.8;
 }
-.cc-aes-like {
+/* Like button and pink heart particles share the accent. */
+.cc-aes-like,
+.cc-aes-heart-pink {
     color: #ff5a7a;
 }
 .cc-aes-btn .svg-icon {
@@ -215,9 +217,6 @@
     line-height: 0;
     color: #fff;          /* grey by default; pink variant below */
     will-change: transform, opacity;
-}
-.cc-aes-heart-pink {
-    color: #ff5a7a;
 }
 /* Filled heart shape, coloured by `color`. */
 .cc-aes-heart .svg-icon {

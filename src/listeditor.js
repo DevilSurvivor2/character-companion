@@ -18,7 +18,6 @@ class ListEditor {
         this.reorderMoved = false;
         this.suppressNextClick = false;
     }
-    get plugin() { return this.tab.plugin; }
     // Build the Add button, the pill grid, and the editor host into containerEl.
     mount(containerEl) {
         new Setting(containerEl)
