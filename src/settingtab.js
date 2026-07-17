@@ -1,129 +1,88 @@
 "use strict";
 const { PluginSettingTab, Setting, setIcon } = require("obsidian");
-const { AESTHETICS, ANIM_BY_NAME, ANIM_POOLS, CHARACTER_SCHEMA, CHARACTER_TOGGLES, COMMENT_SET_SCHEMA, MAIL_SCHEMA, ORACLE_PATRON_FALLBACK, ORACLE_SYS_FALLBACK, PROGRAM_SCHEMA, SPECIAL_EFFECTS, VIP_SCHEMA, newItem } = require("./registries.js");
+const { AESTHETICS, ANIM_BY_NAME, ANIM_POOLS, CHARACTER_SCHEMA, CHARACTER_TOGGLES, COMMENT_SET_SCHEMA, MAIL_SCHEMA, ORACLE_PATRON_FALLBACK, ORACLE_SYS_FALLBACK, SHOW_SCHEMA, SPECIAL_EFFECTS, VIP_SCHEMA, newItem } = require("./registries.js");
 const { capturePointer, releasePointer } = require("./toolkit.js");
 const { ListEditor } = require("./listeditor.js");
 // Enable-pill grids: entries(t) builds pills; save(t) overrides the default saveSettings for per-file lists.
 const PILL_GRIDS = {
     root: {
-        grid: "rootGridEl", empty: "No characters yet. Add one in the Cast tab.",
+        empty: "No characters yet. Add one in the Cast tab.",
         entries: (t) => t.charPills((c) => c.rootEnabled, (c, v) => { c.rootEnabled = v; }),
         save: (t) => t.plugin.saveDataFile("characterData"),
     },
     sidebar: {
-        grid: "sidebarGridEl", empty: "No characters yet. Add one in the Cast tab.",
+        empty: "No characters yet. Add one in the Cast tab.",
         entries: (t) => t.charPills((c) => c.sidebarEnabled, (c, v) => { c.sidebarEnabled = v; }),
         // Rerender so the open panel reflects a newly included / excluded character at once.
         save: (t) => t.plugin.saveDataFile("characterData", true),
     },
     commentSet: {
-        grid: "commentSetGridEl", empty: "No comment sets yet. Add one in the Chat tab.",
+        empty: "No comment sets yet. Add one in the Chat tab.",
         entries: (t) => t.enablePills(t.plugin.streamData.commentSets),
         save: (t) => t.plugin.saveDataFile("streamData"),
     },
     vip: {
-        grid: "vipGridEl", empty: "No patrons yet. Add one in the VIP tab.",
+        empty: "No patrons yet. Add one in the VIP tab.",
         entries: (t) => t.enablePills(t.plugin.oracleData.vips),
         save: (t) => t.plugin.saveDataFile("oracleData"),
     },
     mail: {
-        grid: "mailGridEl", empty: "No mail templates yet. Add one in the Inbox tab.",
+        empty: "No mail templates yet. Add one in the Inbox tab.",
         entries: (t) => t.enablePills(t.plugin.mailData.mailTemplates),
         save: (t) => t.plugin.saveDataFile("mailData"),
     },
     // Effects + aesthetics: no empty state, no explicit save — their flag maps live in data.json, so the default saveSettings persists and repaints in place.
     effect: {
-        grid: "effectGridEl",
         entries: (t) => t.flagPills(SPECIAL_EFFECTS, t.plugin.settings.enabledEffects),
     },
     aesthetic: {
-        grid: "aestheticGridEl",
         entries: (t) => t.flagPills(AESTHETICS, t.plugin.settings.enabledAesthetics),
     },
 };
+// List-editor rows supply only the data and behavior that differ; the constructor derives the shared copy and wiring.
+const LIST_EDITORS = [
+    {
+        editor: "charEditor", noun: "character", plural: "characters", data: "characterData", items: "characters", label: "name", schema: CHARACTER_SCHEMA, seed: { name: "New character" }, render: "renderCharacterBody", grids: ["root", "sidebar"], rerender: true,
+        onAdd: (t, c) => { if (!t.plugin.characterData.activeCharacterId)
+            t.plugin.characterData.activeCharacterId = c.id; },
+        onDelete: (t, id) => { if (t.plugin.characterData.activeCharacterId === id)
+            t.plugin.characterData.activeCharacterId = t.plugin.characterData.characters[0]?.id ?? null; },
+    },
+    { editor: "commentEditor", noun: "comment set", plural: "comment sets", data: "streamData", items: "commentSets", label: "name", schema: COMMENT_SET_SCHEMA, seed: { name: "New comment set" }, render: "renderCommentSetBody", grids: ["commentSet"] },
+    { editor: "vipEditor", noun: "patron", plural: "patrons", data: "oracleData", items: "vips", label: "name", schema: VIP_SCHEMA, seed: { name: "New patron" }, render: "renderVipBody", grids: ["vip"] },
+    { editor: "mailEditor", noun: "mail template", plural: "mail templates", data: "mailData", items: "mailTemplates", label: "name", schema: MAIL_SCHEMA, seed: { name: "New mail template" }, render: "renderMailBody", grids: ["mail"] },
+    { editor: "showEditor", noun: "show", plural: "shows", data: "showData", items: "shows", label: "label", schema: SHOW_SCHEMA, seed: { label: "New show" }, render: "renderShowBody", grids: [] },
+];
 // A slider/range labelled "sec"/"min" edits an ms-STORED setting: the <input> runs in ms, min/max/step are authored in the readable unit and scaled through this map, and only the readout divides back. Any other unit ("%", "px") is label-only (factor 1).
 const MS_PER_UNIT = { sec: 1000, min: 60000 };
 // The settings tab: a tab bar over pages, one row per page in this.tabs.
-class CompanionSettingTab extends PluginSettingTab {
+class SettingTab extends PluginSettingTab {
     constructor(app, plugin) {
         super(app, plugin);
         this.plugin = plugin;
         this.activeTab = "behavior";
         this.bodyEl = null;
-        // Pill-grid host references, one field per PILL_GRIDS row.
-        for (const g of Object.values(PILL_GRIDS))
-            this[g.grid] = null;
-        this.charEditor = new ListEditor(this, {
-            pickName: "Pick a character to edit",
-            pickDesc: "Click a name below to edit it, drag to reorder. Right-click to delete.",
-            addText: "Add character",
-            emptyText: 'No characters yet. Click "Add character".',
-            save: () => this.plugin.saveDataFile("characterData", true),
-            items: () => this.plugin.characterData.characters,
-            labelOf: (c) => c.name || "(unnamed)",
-            makeItem: () => newItem(CHARACTER_SCHEMA, { name: "New character" }),
-            onAdd: (c) => { if (!this.plugin.characterData.activeCharacterId)
-                this.plugin.characterData.activeCharacterId = c.id; },
-            onDelete: (id) => {
-                if (this.plugin.characterData.activeCharacterId === id)
-                    this.plugin.characterData.activeCharacterId = this.plugin.characterData.characters[0]?.id ?? null;
-            },
-            onMutate: () => { this.rebuildPillGrid("root"); this.rebuildPillGrid("sidebar"); },
-            renderBody: (host, c, ed) => this.renderCharacterBody(host, c, ed),
-        });
-        this.commentEditor = new ListEditor(this, {
-            pickName: "Pick a comment set to edit",
-            pickDesc: "Click a name below to edit it, drag to reorder. Right-click to delete.",
-            addText: "Add comment set",
-            emptyText: 'No comment sets yet. Click "Add comment set".',
-            save: () => this.plugin.saveDataFile("streamData"),
-            items: () => this.plugin.streamData.commentSets,
-            labelOf: (cs) => cs.name || "(unnamed)",
-            makeItem: () => newItem(COMMENT_SET_SCHEMA, { name: "New comment set" }),
-            onMutate: () => this.rebuildPillGrid("commentSet"),
-            renderBody: (host, cs, ed) => this.renderCommentSetBody(host, cs, ed),
-        });
-        this.vipEditor = new ListEditor(this, {
-            pickName: "Pick a patron to edit",
-            pickDesc: "Click a name below to edit it, drag to reorder. Right-click to delete.",
-            addText: "Add patron",
-            emptyText: 'No patrons yet. Click "Add patron".',
-            save: () => this.plugin.saveDataFile("oracleData"),
-            items: () => this.plugin.oracleData.vips,
-            labelOf: (v) => v.name || "(unnamed)",
-            makeItem: () => newItem(VIP_SCHEMA, { name: "New patron" }),
-            onMutate: () => this.rebuildPillGrid("vip"),
-            renderBody: (host, v, ed) => this.renderVipBody(host, v, ed),
-        });
-        this.mailEditor = new ListEditor(this, {
-            pickName: "Pick a mail template to edit",
-            pickDesc: "Click a name below to edit it, drag to reorder. Right-click to delete.",
-            addText: "Add mail template",
-            emptyText: 'No mail templates yet. Click "Add mail template".',
-            save: () => this.plugin.saveDataFile("mailData"),
-            items: () => this.plugin.mailData.mailTemplates,
-            labelOf: (m) => m.name || "(unnamed)",
-            makeItem: () => newItem(MAIL_SCHEMA, { name: "New mail template" }),
-            onMutate: () => this.rebuildPillGrid("mail"),
-            renderBody: (host, m, ed) => this.renderMailBody(host, m, ed),
-        });
-        // No enable pill grid — a program self-gates on its own schedule (0 = off) — so onMutate has nothing to rebuild.
-        this.programEditor = new ListEditor(this, {
-            pickName: "Pick a program to edit",
-            pickDesc: "Click a name below to edit it, drag to reorder. Right-click to delete.",
-            addText: "Add program",
-            emptyText: 'No programs yet. Click "Add program".',
-            save: () => this.plugin.saveDataFile("programData"),
-            items: () => this.plugin.programData.programs,
-            labelOf: (p) => p.label || "(unnamed)",
-            makeItem: () => newItem(PROGRAM_SCHEMA, { label: "New program" }),
-            onMutate: () => { },
-            renderBody: (host, p, ed) => this.renderProgramBody(host, p, ed),
-        });
+        this.pillGridEls = new Map();
+        for (const row of LIST_EDITORS) {
+            this[row.editor] = new ListEditor(this, {
+                pickName: `Pick a ${row.noun} to edit`,
+                pickDesc: "Click a name below to edit it, drag to reorder. Right-click to delete.",
+                addText: `Add ${row.noun}`,
+                emptyText: `No ${row.plural} yet. Click "Add ${row.noun}".`,
+                save: () => this.plugin.saveDataFile(row.data, row.rerender),
+                items: () => this.plugin[row.data][row.items],
+                labelOf: (item) => item[row.label],
+                makeItem: () => newItem(row.schema, row.seed),
+                onAdd: row.onAdd ? (item) => row.onAdd(this, item) : undefined,
+                onDelete: row.onDelete ? (id) => row.onDelete(this, id) : undefined,
+                onMutate: () => row.grids.forEach((id) => this.rebuildPillGrid(id)),
+                renderBody: (host, item, editor) => this[row.render](host, item, editor),
+            });
+        }
         // Tab table — one source for the tab bar and the body dispatch. An `icon` marks a list-editor page: rendered icon-only, expanding to icon+label while active.
         this.tabs = [
             { id: "behavior", label: "Behavior", render: (c) => this.renderBehaviorTab(c) },
-            { id: "character", label: "Cast", icon: "user-round", render: (c) => this.renderCastTab(c) },
+            { id: "character", label: "Cast", icon: "user-round", render: (c) => this.renderCharacterTab(c) },
             { id: "display", label: "Display", render: (c) => this.renderDisplayTab(c) },
             { id: "stream", label: "Stream", render: (c) => this.renderStreamTab(c) },
             { id: "comment", label: "Chat", icon: "message-circle-more", render: (c) => this.renderCommentTab(c) },
@@ -133,7 +92,8 @@ class CompanionSettingTab extends PluginSettingTab {
             { id: "inbox", label: "Inbox", icon: "mails", render: (c) => this.renderInboxTab(c) },
             { id: "blog", label: "Blog", render: (c) => this.renderBlogTab(c) },
             { id: "news", label: "News", render: (c) => this.renderNewsTab(c) },
-            { id: "program", label: "Program", icon: "tv", render: (c) => this.renderProgramTab(c) },
+            { id: "show", label: "TV", icon: "tv", render: (c) => this.renderShowTab(c) },
+            { id: "roleplay", label: "Roleplay", render: (c) => this.renderRoleplayTab(c) },
         ];
     }
     // The shared persist tail every control's onChange ends in: the field's own save() when given, else the settings save with the control's rerender flag.
@@ -298,12 +258,7 @@ class CompanionSettingTab extends PluginSettingTab {
         c.empty();
         this.tabs.find((t) => t.id === this.activeTab)?.render(c);
     }
-    // A muted one-line intro at the top of a tab.
-    tabIntro(container, text) {
-        container.createDiv({ cls: "cc-tab-intro", text });
-    }
     renderBehaviorTab(c) {
-        this.tabIntro(c, "How the character acts on its own and when you click it.");
         new Setting(c).setName("Idle behavior").setHeading();
         this.addToggleSetting(c, {
             name: "Wander when idle",
@@ -322,9 +277,7 @@ class CompanionSettingTab extends PluginSettingTab {
             unit: "min", min: 1, max: 60,
             key: "sleepAfterMs",
         });
-        new Setting(c)
-            .setName("Allowed idle animations")
-            .setDesc("Click to enable or disable. Dimmed means off.");
+        new Setting(c).setName("Allowed idle animations").setDesc("Click to enable or disable. Dimmed means off.");
         this.renderAnimToggles(c.createDiv(), "idle");
         new Setting(c).setName("Click behavior").setHeading();
         this.addSliderSetting(c, {
@@ -338,13 +291,10 @@ class CompanionSettingTab extends PluginSettingTab {
             desc: "Whether the character bobs on a normal (quote) click.",
             key: "animateOnQuote",
         });
-        new Setting(c)
-            .setName("Allowed surprise animations")
-            .setDesc("Click to enable or disable. Dimmed means off.");
+        new Setting(c).setName("Allowed surprise animations").setDesc("Click to enable or disable. Dimmed means off.");
         this.renderAnimToggles(c.createDiv(), "surprise");
     }
     renderDisplayTab(c) {
-        this.tabIntro(c, "Where the characters appear, how big they are, and how fast they move.");
         new Setting(c).setName("Display in sidebar").setHeading();
         this.addSliderSetting(c, {
             name: "Sprite max height", unit: "px",
@@ -371,9 +321,7 @@ class CompanionSettingTab extends PluginSettingTab {
             parse: (n) => typewriterSteps[n],
             readout: (n) => typewriterLabels[n],
         });
-        new Setting(c)
-            .setName("Characters in sidebar")
-            .setDesc("Click a character to include or exclude it in the sidebar panel. Dimmed means off. Use the \"show another character\" button to draw from those left on.");
+        new Setting(c).setName("Characters in sidebar").setDesc("Click a character to include or exclude it in the sidebar panel. Dimmed means off. Use the \"show another character\" button to draw from those left on.");
         this.mountPillGrid(c, "sidebar");
         new Setting(c).setName("Display in root").setHeading();
         this.addSliderSetting(c, {
@@ -388,17 +336,14 @@ class CompanionSettingTab extends PluginSettingTab {
             min: 10, max: 50, step: 2,
             key: "rootWalkSpeed",
         });
-        new Setting(c)
-            .setName("Characters in root")
-            .setDesc("Click a name to show or hide it walking along the bottom of the window. Dimmed means off. Hide them all to disable this feature entirely.");
+        new Setting(c).setName("Characters in root").setDesc("Click a name to show or hide it walking along the bottom of the window. Dimmed means off. Hide them all to disable this feature entirely.");
         this.mountPillGrid(c, "root");
     }
-    renderCastTab(c) {
+    renderCharacterTab(c) {
         new Setting(c).setName("Character list").setHeading();
         this.charEditor.mount(c);
     }
     renderStreamTab(c) {
-        this.tabIntro(c, "The livestreaming that comes with scrolling comments.");
         new Setting(c).setName("Stream mode").setHeading();
         this.addRangeSetting(c, {
             name: "Background change interval",
@@ -413,13 +358,9 @@ class CompanionSettingTab extends PluginSettingTab {
             get: () => this.plugin.settings.streamBackgrounds,
             set: (v) => (this.plugin.settings.streamBackgrounds = v.trim()),
         });
-        new Setting(c)
-            .setName("Special effects")
-            .setDesc("Click an effect to turn it on or off. Dimmed means off. Can overlay the stream bg and layer on top of each other.");
+        new Setting(c).setName("Special effects").setDesc("Click an effect to turn it on or off. Dimmed means off. Can overlay the stream bg and layer on top of each other.");
         this.mountPillGrid(c, "effect");
-        new Setting(c)
-            .setName("Aesthetics")
-            .setDesc("Click an element to turn it on or off. Dimmed means off. Can overlay the stream bg.");
+        new Setting(c).setName("Aesthetics").setDesc("Click an element to turn it on or off. Dimmed means off. Can overlay the stream bg.");
         this.mountPillGrid(c, "aesthetic");
         this.addRangeSetting(c, {
             name: "Comment interval",
@@ -433,28 +374,24 @@ class CompanionSettingTab extends PluginSettingTab {
             min: 1, max: 15, step: 1,
             key: "streamHistoryCount",
         });
-        new Setting(c)
-            .setName("Comment sets")
-            .setDesc("Click a comment set to include or exclude it. Dimmed means off. Edit comment sets in the Chat tab.");
+        new Setting(c).setName("Comment sets").setDesc("Click a comment set to include or exclude it. Dimmed means off. Edit comment sets in the Chat tab.");
         this.mountPillGrid(c, "commentSet");
         new Setting(c).setName("Miscellaneous").setHeading();
         this.addTextSetting(c, {
             name: "Comment font",
-            desc: 'Font for the chat bubbles. Comma-separate.',
-            placeholder: '"Font Name A", "Font Name B"',
+            desc: "Font for the chat bubbles. Comma-separate.",
+            placeholder: "\"Font Name A\", \"Font Name B\"",
             get: () => this.plugin.settings.commentFont,
             set: (v) => (this.plugin.settings.commentFont = v.trim()),
         });
         this.addTextSetting(c, {
             name: "Gift emoji font",
-            desc: 'Font for the emojis spawned by the gift button. Comma-separate.',
-            placeholder: '"Noto Color Emoji"',
+            desc: "Font for the emojis spawned by the gift button. Comma-separate.",
+            placeholder: "\"Noto Color Emoji\"",
             get: () => this.plugin.settings.giftEmojiFont,
             set: (v) => (this.plugin.settings.giftEmojiFont = v.trim()),
         });
-        new Setting(c)
-            .setName("Gifts")
-            .setDesc("Emojis spawned by the gift button. Space-separate. Falls back to 🎁.");
+        new Setting(c).setName("Gifts").setDesc("Emojis spawned by the gift button. Space-separate. Falls back to 🎁.");
         this.addTextarea(c, {
             get: () => this.plugin.settings.giftEmojis,
             set: (v) => (this.plugin.settings.giftEmojis = v),
@@ -464,24 +401,46 @@ class CompanionSettingTab extends PluginSettingTab {
         new Setting(c).setName("Comment list").setHeading();
         this.commentEditor.mount(c);
     }
+    renderRoleplayTab(c) {
+        new Setting(c).setName("Roleplay mode").setHeading();
+        this.addToggleSetting(c, {
+            name: "Shared party roll",
+            desc: "When on, double-clicking a button deals the table out of one shared bag, so no two root characters announce the same entry. When off, each character draws its own and repeats can happen.",
+            key: "roleplayShared",
+        });
+        const save = () => this.plugin.saveDataFile("roleplayData");
+        new Setting(c).setName("Structure").setDesc("One chain per line, levels separated by \">\". A level is a single name or a set \"{a, b, c}\". Lines merge by name (\"a > {b, c}\" plus \"b > {d, e}\" attaches d and e under b); names that never follow a \">\" form the first row of buttons. Clicking a name that has a table below makes the character roll it and speak; a name with a next level also moves the buttons there. Double-click a name at the end of a chain to have the root characters speak instead. The buttons return to the first row after sitting idle.");
+        this.addTextarea(c, {
+            get: () => this.plugin.roleplayData.structure,
+            set: (v) => (this.plugin.roleplayData.structure = v),
+            save,
+        });
+        new Setting(c).setName("Message variety").setHeading();
+        new Setting(c).setName("Tables").setDesc("One random table per line. Format = \"table: a, b, c\" or RiScript \"table: [a (2) | b | c]\". A roll draws one entry. RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, other tables = $table (single-word names), inline choices = [a | b], lexicon = $rndAdj / $rndNoun / $rndVerb.");
+        this.addMapTextarea(c, {
+            get: () => this.plugin.roleplayData.tables,
+            set: (m) => (this.plugin.roleplayData.tables = m),
+            save,
+        });
+    }
     renderOracleTab(c) {
-        this.tabIntro(c, "The divine broadcasting that sometimes reacts to what you've just typed.");
         new Setting(c).setName("Oracle mode").setHeading();
         this.addTextSetting(c, {
             name: "System title",
-            desc: 'The channel brand, used as $system. Blank falls back to "' + ORACLE_SYS_FALLBACK + '".',
+            desc: "The channel brand, used as $system. Blank falls back to \"" + ORACLE_SYS_FALLBACK + "\".",
             placeholder: ORACLE_SYS_FALLBACK,
             key: "oracleSystemName",
         });
         this.addTextSetting(c, {
             name: "Patron origin",
-            desc: 'The audience species or status, used as $patron. Comma-separate several to draw one at random each time (e.g. "Demon, Angel"). Give a custom plural in brackets (e.g. "Persona (Personae)"). Blank falls back to "' + ORACLE_PATRON_FALLBACK + '".',
+            desc: "The audience species or status, used as $patron. Comma-separate several to draw one at random each time (e.g. \"Demon, Angel\"). Give a custom plural in brackets (e.g. \"Persona (Personae)\"). Blank falls back to \"" + ORACLE_PATRON_FALLBACK + "\".",
             placeholder: ORACLE_PATRON_FALLBACK,
             key: "oraclePatronName",
         });
         // Three independent interval ranges.
         const interval = (name, kind) => this.addRangeSetting(c, {
-            name, desc: "A new message of this type appears after a random time in this range.",
+            name,
+            desc: "A new message of this type appears after a random time in this range.",
             unit: "sec", min: 5, max: 180, step: 5,
             minKey: "oracle" + kind + "MinMs", maxKey: "oracle" + kind + "MaxMs",
         });
@@ -494,22 +453,16 @@ class CompanionSettingTab extends PluginSettingTab {
             key: "oracleVipReactsToTyping",
         });
         const saveOracle = () => this.plugin.saveDataFile("oracleData");
-        new Setting(c)
-            .setName("Patrons in oracle")
-            .setDesc("Click a patron to enable or disable it. Dimmed means off. Edit patrons in the VIP tab.");
+        new Setting(c).setName("Patrons in oracle").setDesc("Click a patron to enable or disable it. Dimmed means off. Edit patrons in the VIP tab.");
         this.mountPillGrid(c, "vip");
         new Setting(c).setName("Message list").setHeading();
-        new Setting(c)
-            .setName("System messages")
-            .setDesc("One message per line. RiScript: entity = $system / $patron / $patrons, inline choices = [a | b].");
+        new Setting(c).setName("System messages").setDesc("One message per line. RiScript: entity = $system / $patron / $patrons, inline choices = [a | b].");
         this.addBulkTextarea(c, {
             get: () => this.plugin.oracleData.sysTemplates,
             set: (lines) => (this.plugin.oracleData.sysTemplates = lines),
             save: saveOracle,
         });
-        new Setting(c)
-            .setName("Anonymous messages")
-            .setDesc("One message per line. RiScript: entity = $system / $patron / $patrons, inline choices = [a | b].");
+        new Setting(c).setName("Anonymous messages").setDesc("One message per line. RiScript: entity = $system / $patron / $patrons, inline choices = [a | b].");
         this.addBulkTextarea(c, {
             get: () => this.plugin.oracleData.anonTemplates,
             set: (lines) => (this.plugin.oracleData.anonTemplates = lines),
@@ -553,21 +506,14 @@ class CompanionSettingTab extends PluginSettingTab {
             set: (v) => (vip.origin = v.trim()),
             save,
         });
-        new Setting(box)
-            .setName("Variables")
-            .setDesc("One variable per line. Format = \"variable: a, b, c\". $topic decides what this patron will react to when you're typing; allows both verbs and nouns; matches inflections automatically. Exclusive to this patron.");
+        new Setting(box).setName("Variables").setDesc("One variable per line. Format = \"variable: a, b, c\". $topic decides what this patron will react to when you're typing; allows both verbs and nouns; matches inflections automatically. Exclusive to this patron.");
         this.addMapTextarea(box, { get: () => vip.vars, set: (m) => (vip.vars = m), save });
-        new Setting(box)
-            .setName("Reactions")
-            .setDesc("One reaction per line. Render = \"The Patron 'Modifier' reacts somehow\" (e.g. \"The Constellation 'Crawling Chaos' applauds this madness\").");
+        new Setting(box).setName("Reactions").setDesc("One reaction per line. Render = \"The Patron 'Modifier' reacts somehow\" (e.g. \"The Constellation 'Crawling Chaos' applauds this madness\").");
         this.addBulkTextarea(box, { get: () => vip.reactions, set: (lines) => (vip.reactions = lines), save });
-        new Setting(box)
-            .setName("Asides")
-            .setDesc("One aside per line. Render = \"The Patron's reaction + The Patron's follow-up comments\".");
+        new Setting(box).setName("Asides").setDesc("One aside per line. Render = \"The Patron's reaction + The Patron's follow-up comments\".");
         this.addBulkTextarea(box, { get: () => vip.asides, set: (lines) => (vip.asides = lines), save });
     }
     renderMailTab(c) {
-        this.tabIntro(c, "The period emailing that directly address the character.");
         new Setting(c).setName("Mail mode").setHeading();
         this.addRangeSetting(c, {
             name: "Mail interval",
@@ -575,9 +521,7 @@ class CompanionSettingTab extends PluginSettingTab {
             unit: "min", min: 1, max: 60,
             minKey: "mailMinMs", maxKey: "mailMaxMs",
         });
-        new Setting(c)
-            .setName("Mail templates")
-            .setDesc("Click a mail template to include or exclude it. Dimmed means off. Edit mail templates in the Inbox tab.");
+        new Setting(c).setName("Mail templates").setDesc("Click a mail template to include or exclude it. Dimmed means off. Edit mail templates in the Inbox tab.");
         this.mountPillGrid(c, "mail");
         this.addConstantsSection(c, {
             desc: "One constant per line. Format = \"constant: a, b, c\". Shared across all mail templates.",
@@ -591,7 +535,6 @@ class CompanionSettingTab extends PluginSettingTab {
         this.mailEditor.mount(c);
     }
     renderBlogTab(c) {
-        this.tabIntro(c, "The ambient microblogging that never mentions the character.");
         new Setting(c).setName("Blog mode").setHeading();
         this.addRangeSetting(c, {
             name: "Blog interval",
@@ -600,9 +543,7 @@ class CompanionSettingTab extends PluginSettingTab {
             minKey: "blogMinMs", maxKey: "blogMaxMs",
         });
         new Setting(c).setName("Message list").setHeading();
-        new Setting(c)
-            .setName("Microblogs")
-            .setDesc("One blog per line. Format = \"@handle #tags blog content\". @handle and #tags are optional. RiScript: random user = $handle, named user = $celebrity, inline choices = [a | b], lexicon = $rndNoun / $rndVerb / $rndAdj.");
+        new Setting(c).setName("Microblogs").setDesc("One blog per line. Format = \"@handle #tags blog content\". @handle and #tags are optional. RiScript: random user = $handle, named user = $celebrity, inline choices = [a | b], lexicon = $rndNoun / $rndVerb / $rndAdj.");
         this.addBulkTextarea(c, {
             get: () => this.plugin.blogData.messages,
             set: (lines) => (this.plugin.blogData.messages = lines),
@@ -616,30 +557,27 @@ class CompanionSettingTab extends PluginSettingTab {
         });
     }
     renderNewsTab(c) {
-        this.tabIntro(c, "The rolling news that reports on the character.");
         new Setting(c).setName("News mode").setHeading();
         this.addRangeSetting(c, {
             name: "News interval",
-            desc: "The next news beat — a chyron pass or a feed bubble, whichever face runs — comes after a random time in this range.",
+            desc: "A new chyron pass (or feed beat) appears after a random time in this range.",
             unit: "min", min: 0.5, max: 30, step: 0.5,
             minKey: "newsMinMs", maxKey: "newsMaxMs",
         });
         this.addToggleSetting(c, {
-            name: "Feed instead of chyron",
-            desc: "Off: headlines scroll across the bottom-bar chyron, several per pass — the chyron rides stream mode's bar, so it only shows while stream mode is on. On: each beat drops one headline into the comment feed as a bubble instead (no stream mode needed).",
+            name: "News to feed instead of chyron",
+            desc: "Off scrolls several headlines across the bottom chyron. On drops one headline into the comment feed.",
             key: "newsToFeed",
         });
         new Setting(c).setName("Message list").setHeading();
-        new Setting(c)
-            .setName("Headlines")
-            .setDesc("One headline per line. Format = \"[Section] headline content\". A leading [Section] is optional; it shows as a label in the feed and is dropped from the chyron. RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], lexicon = $rndAdj / $rndNoun / $rndVerb.");
+        new Setting(c).setName("Headlines").setDesc("One headline per line. Format = \"[Section] headline content\". [Section] is optional. RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], lexicon = $rndAdj / $rndNoun / $rndVerb.");
         this.addBulkTextarea(c, {
             get: () => this.plugin.newsData.messages,
             set: (lines) => (this.plugin.newsData.messages = lines),
             save: () => this.plugin.saveDataFile("newsData"),
         });
         this.addConstantsSection(c, {
-            desc: "One constant per line. Format = \"constant: a, b, c\". Shared across all headlines.",
+            desc: "One constant per line. Format = \"constant: a, b, c\".",
             get: () => this.plugin.newsData.constants,
             set: (m) => (this.plugin.newsData.constants = m),
             save: () => this.plugin.saveDataFile("newsData"),
@@ -658,7 +596,7 @@ class CompanionSettingTab extends PluginSettingTab {
         });
         this.addTextSetting(box, {
             name: "Title",
-            desc: 'The subject. RiScript: random strings ($num/$let/$mix<lo-hi>), character vars ($name/$epithet/...), mail constants ($npc/...), lexicon fillers ($rndNoun/$rndVerb/$rndAdj).',
+            desc: "The subject. Refer to Content for RiScript.",
             placeholder: "A $rndAdj offer for $name",
             get: () => mail.title,
             set: (v) => (mail.title = v),
@@ -666,7 +604,7 @@ class CompanionSettingTab extends PluginSettingTab {
         });
         this.addTextSetting(box, {
             name: "From",
-            desc: 'Who sent it. Use $constant pools (e.g. "npc: your friend, secret, just a fan"), or inline choices (e.g. "[chad | loser | a nameless someone]").',
+            desc: "Who sent it. Refer to Content for RiScript.",
             placeholder: "someone",
             get: () => mail.from,
             set: (v) => (mail.from = v),
@@ -674,55 +612,50 @@ class CompanionSettingTab extends PluginSettingTab {
         });
         this.addTextSetting(box, {
             name: "To",
-            desc: 'Who receives it. Use $name (or $epithet) to land on the shown character.',
+            desc: "Who receives it. Use $name (or $epithet) to land on the shown character.",
             placeholder: "[$name | dear customer]",
             get: () => mail.to,
             set: (v) => (mail.to = v),
             save,
         });
-        new Setting(box)
-            .setName("Content")
-            .setDesc("Multi-line. RiScript: Same as Title, plus $to for mail content to repeat the addressee.");
+        new Setting(box).setName("Content").setDesc("Multi-line. A blank line separates templates to draw one at random each time. RiScript: random strings = $num / $let / $mix<lo-hi>, character vars = $name / $epithet / $role / $deed / $topic, constants = $npc / $gang / $corp, inline choices = [chad | loser | someone], lexicon fillers = $rndNoun / $rndVerb / $rndAdj, plus $to for content to repeat the addressee.");
         this.addTextarea(box, { get: () => mail.content, set: (v) => (mail.content = v), save, rows: 6 });
     }
-    renderProgramTab(c) {
-        this.tabIntro(c, "The scheduled broadcasts that take over the panel backdrop.");
-        new Setting(c).setName("Program list").setHeading();
-        this.programEditor.mount(c);
+    renderShowTab(c) {
+        new Setting(c).setName("Show list").setHeading();
+        this.showEditor.mount(c);
     }
-    // Per-program editor body; all fields persist to program-data.json.
-    renderProgramBody(containerEl, program, editor) {
+    // Per-show editor body; all fields persist to show-data.json.
+    renderShowBody(containerEl, show, editor) {
         const box = containerEl.createDiv({ cls: "cc-settings-box" });
-        const save = () => this.plugin.saveDataFile("programData");
+        const save = () => this.plugin.saveDataFile("showData");
         this.addTextSetting(box, {
             name: "Label",
             placeholder: "(unnamed)",
-            get: () => program.label,
-            set: (v) => { program.label = v; editor.refreshPillLabel(program.id, v || "(unnamed)"); },
+            get: () => show.label,
+            set: (v) => { show.label = v; editor.refreshPillLabel(show.id, v || "(unnamed)"); },
             save,
         });
         this.addTextSetting(box, {
             name: "Background",
-            desc: "The full-panel image while the program airs. Same format as the stream background (comma-separated image paths, a single folder path, or an emoji), drawn at random and held for the whole airing — no timed swap. Hijacks the stream background and hides the sprite; effects and overlays keep running. Not RiScript.",
+            desc: "Vault-relative (e.g. \"Attach/bg1.png\"), hijacking the stream background, drawn at random and held for the whole airing. Either separate multiple image paths by commas, or leave a single folder path to use all images inside it; the two methods can't be mixed. A bare filename works if unique. A single emoji (e.g. \"🌃\") works too.",
             placeholder: "Attach/bg1.png, Attach/bg2.png",
-            get: () => program.background,
-            set: (v) => (program.background = v.trim()),
+            get: () => show.background,
+            set: (v) => (show.background = v.trim()),
             save,
         });
-        // Slider steps: Off → :01 … :59 → :00 (stored as 60 — see PROGRAM_SCHEMA).
+        // Slider steps: Off → :01 … :59 → :00 (stored as 60 — see SHOW_SCHEMA).
         this.addSliderSetting(box, {
             name: "Schedule",
-            desc: "The program airs at this minute past every hour (e.g. :35 → 0:35, 1:35, … 23:35) while the sidebar panel is active. The first step disables it; the last step (:00) is the top of the hour.",
+            desc: "A new episode airs at this minute past every hour.",
             min: 0, max: 60, step: 1,
-            get: () => program.schedule,
-            set: (v) => (program.schedule = v),
+            get: () => show.schedule,
+            set: (v) => (show.schedule = v),
             save,
             readout: (v) => v === 0 ? "Off" : ":" + String(v % 60).padStart(2, "0"),
         });
-        new Setting(box)
-            .setName("Content")
-            .setDesc("The script that plays while the program airs — one line at a time as a bubble at the bottom, each held like a speech bubble, then the airing ends. Multi-line (one line per beat). RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], lexicon = $rndAdj / $rndNoun / $rndVerb.");
-        this.addTextarea(box, { get: () => program.content, set: (v) => (program.content = v), save, rows: 6 });
+        new Setting(box).setName("Content").setDesc("Multi-line. A blank line separates episodes to draw one at random each time. RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], lexicon = $rndAdj / $rndNoun / $rndVerb.");
+        this.addTextarea(box, { get: () => show.content, set: (v) => (show.content = v), save, rows: 6 });
     }
     // An on/off pill per animation of a role, wired to its settings flag map.
     renderAnimToggles(host, role) {
@@ -797,13 +730,13 @@ class CompanionSettingTab extends PluginSettingTab {
     }
     // Mount one enable-pill grid: create its host div, store the ref, paint it.
     mountPillGrid(container, id) {
-        this[PILL_GRIDS[id].grid] = container.createDiv();
+        this.pillGridEls.set(id, container.createDiv());
         this.rebuildPillGrid(id);
     }
     // Repaint one enable-pill grid fresh into its host; skip an off-screen host (isConnected — a rebuild triggered from another tab is harmless).
     rebuildPillGrid(id) {
         const g = PILL_GRIDS[id];
-        const host = this[g.grid];
+        const host = this.pillGridEls.get(id);
         if (!host || !host.isConnected)
             return;
         host.empty();
@@ -887,25 +820,19 @@ class CompanionSettingTab extends PluginSettingTab {
             set: (v) => (character.pronouns = v.trim()),
             save,
         });
-        new Setting(box)
-            .setName("Quotes")
-            .setDesc("One quote per line. RiScript ignored.");
+        new Setting(box).setName("Quotes").setDesc("One quote per line. RiScript ignored.");
         this.addBulkTextarea(box, {
             get: () => character.quotes,
             set: (lines) => (character.quotes = lines),
             save,
         });
-        new Setting(box)
-            .setName("Deeds")
-            .setDesc("What they've done. One verb phrase per line, used as $deed. Append .ing() / .ed() / .s() to inflect (e.g., $deed.ing() = \"conquer the world\" → \"conquering the world\"). Write non-actions with auxiliary verbs (e.g., \"be a master of disguise\").");
+        new Setting(box).setName("Deeds").setDesc("What they've done. One verb phrase per line, used as $deed. Append .ing() / .ed() / .s() to inflect (e.g. $deed.ing() = \"conquer the world\" → \"conquering the world\"). Write non-actions with auxiliary verbs (e.g. \"be a master of disguise\").");
         this.addBulkTextarea(box, {
             get: () => character.deeds,
             set: (lines) => (character.deeds = lines),
             save,
         });
-        new Setting(box)
-            .setName("Topics")
-            .setDesc("What they're associated with. One noun phrase per line, used as $topic. Write actions with gerunds (e.g., \"programming and hacking\").");
+        new Setting(box).setName("Topics").setDesc("What they're associated with. One noun phrase per line, used as $topic. Write actions with gerunds (e.g. \"programming and hacking\").");
         this.addBulkTextarea(box, {
             get: () => character.topics,
             set: (lines) => (character.topics = lines),
@@ -927,17 +854,13 @@ class CompanionSettingTab extends PluginSettingTab {
             },
             save,
         });
-        new Setting(box)
-            .setName("Comments")
-            .setDesc("One comment per line. RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], weighted choices = [a(n) | b], lexicon = $rndAdj / $rndNoun / $rndVerb, string = $num<1-9> / $let<5-7> / $mix<2-6> (also $let-lower / $let-upper / $mix-lower / $mix-upper). Any plain line works as-is.");
+        new Setting(box).setName("Comments").setDesc("One comment per line. RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], weighted choices = [a(n) | b], lexicon = $rndAdj / $rndNoun / $rndVerb, string = $num<1-9> / $let<5-7> / $mix<2-6> (also $let-lower / $let-upper / $mix-lower / $mix-upper). Any plain line works as-is.");
         this.addBulkTextarea(box, {
             get: () => set.comments,
             set: (lines) => (set.comments = lines),
             save,
         });
-        new Setting(box)
-            .setName("Variables")
-            .setDesc("One variable per line. Format = \"variable: a, b, c\".");
+        new Setting(box).setName("Variables").setDesc("One variable per line. Format = \"variable: a, b, c\".");
         this.addMapTextarea(box, {
             get: () => set.vars,
             set: (m) => (set.vars = m),
@@ -945,4 +868,4 @@ class CompanionSettingTab extends PluginSettingTab {
         });
     }
 }
-module.exports = { CompanionSettingTab };
+module.exports = { SettingTab };

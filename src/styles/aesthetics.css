@@ -7,7 +7,7 @@
     display: none;
     pointer-events: none;
 }
-.cc-aes.cc-aes-show {
+.cc-aes.cc-aes-on {
     display: block;
 }
 .cc-aes .cc-hidden {
@@ -41,7 +41,7 @@
     padding: 2px 8px;
     border-radius: 10px;
     background: rgba(0, 0, 0, 0.45);
-    color: rgb(255, 255, 255, 0.8);
+    color: rgba(255, 255, 255, 0.8);
     font-variant-numeric: tabular-nums;
     text-transform: capitalize;
 }
@@ -59,7 +59,7 @@
     white-space: nowrap;
 }
 
-/* Universal hijack transition — every takeover (bar occupants AND the program's scene cover) fades through this one recipe. cc-hijack carries the transition; cc-hijack-hidden fades to nothing (visibility waits out the fade so a hidden react bar can't be clicked, but snaps back instantly on reveal). */
+/* Universal hijack transition — every takeover (bar occupants AND the show's scene cover) fades through this one recipe. cc-hijack carries the transition; cc-hijack-hidden fades to nothing (visibility waits out the fade so a hidden react bar can't be clicked, but snaps back instantly on reveal). */
 .cc-hijack {
     transition: opacity var(--cc-hijack-fade) ease, visibility 0s;
 }
@@ -140,13 +140,40 @@
     height: 24px;
 }
 
+/* Roleplay occupant: one row of equal-width option buttons over the current graph level; JS sets --cc-roleplay-cols to the level's node count. */
+.cc-aes-roleplay {
+    display: grid;
+    grid-template-columns: repeat(var(--cc-roleplay-cols, 1), 1fr);
+    gap: 6px;
+}
+.cc-aes-roleplay-btn {
+    min-width: 0;
+    padding: 2px 8px;
+    border: none !important;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.45) !important;
+    box-shadow: none !important;
+    color: rgba(255, 255, 255, 0.8);
+    font-family: var(--cc-stream-font);
+    font-size: var(--font-ui-smaller);
+    text-transform: capitalize;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+    pointer-events: auto;
+}
+.cc-aes-roleplay-btn:hover {
+    background: rgba(0, 0, 0, 0.65) !important;
+}
+
 /* Chyron occupant: one clipped line of headlines; WAAPI scrolls the track, only the box lives here. */
 .cc-aes-chyron {
     overflow: hidden;
     padding: 2px 8px;
     border-radius: 10px;
     background: rgba(0, 0, 0, 0.45);
-    color: rgb(255, 255, 255, 0.8);
+    color: rgba(255, 255, 255, 0.8);
     font-family: var(--cc-stream-font);
     font-size: var(--font-ui-smaller);
     white-space: nowrap;
@@ -157,15 +184,19 @@
     will-change: transform;
 }
 
-/* Program occupant: the airing's content, one line at a time as a centred bottom bubble. Each line re-runs the hijack fade so it enters fresh. */
-.cc-aes-program {
-    padding: 6px 14px;
-    border-radius: 12px;
-    background: rgba(0, 0, 0, 0.55);
-    color: rgb(255, 255, 255, 0.9);
+/* Show occupant: the airing's content, one line at a time as a centred anime-episode subtitle — white text with a black outline, no box. Each line re-runs the hijack fade so it enters fresh. */
+.cc-aes-show {
+    padding: 0 14px;
+    background: transparent;
+    color: #fff;
     font-family: var(--cc-stream-font);
-    font-size: var(--font-ui-small);
+    font-size: var(--font-ui-medium);
+    font-weight: 600;
     text-align: center;
+    text-shadow:
+        0 0 2px #000,
+        1px 1px 1px #000, -1px 1px 1px #000, 1px -1px 1px #000, -1px -1px 1px #000,
+        0 2px 3px rgba(0, 0, 0, 0.6);
     word-break: break-word;
     pointer-events: none;
 }

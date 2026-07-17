@@ -170,7 +170,7 @@ class Walker {
         img.setCssProps({ transform: "" });
         return true;
     }
-    // The universal ease every cross-mode transition passes through: settle any in-flight image animation AND glide the wrap's vertical to targetY, then run `then` after --cc-ease (at once if nothing to ease). Caller owns the mode; this also tears down the old mode's activity sequence.
+    // Common settlement for value-driven mode changes: settle any in-flight image animation AND glide the wrap to targetY, then run `then` after --cc-ease (at once if nothing moves); loop-driven handoffs explicitly end the old activity/ease and take control directly.
     easeToward(targetY, then) {
         this.clearActivities();
         this.endWatch();

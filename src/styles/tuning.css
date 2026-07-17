@@ -46,9 +46,10 @@
     --cc-walk-rest-y: 3;   /* walk arc: rest, 3% below floor */
     --cc-walk-lift-y: 0;   /* walk arc: peak, level with the floor */
 
-    /* Bubble anchoring: --cc-bubble-gap is a fraction of the surface's sprite max-height; --cc-bubble-inset is the measured transparent-top height in px (set per-walker by JS). A row counts as coloured once any pixel's alpha exceeds --cc-bubble-inset-alpha. */
+    /* Bubble anchoring: --cc-bubble-gap is a fraction of the surface's sprite max-height; --cc-bubble-inset is the measured transparent-top height in px (set per-walker by JS). The alpha scan downsamples within scan-max, and a row counts as coloured once any pixel exceeds inset-alpha. */
     --cc-bubble-gap: 0.1;
     --cc-bubble-inset-alpha: 0.05;
+    --cc-bubble-inset-scan-max: 512;
     --cc-bubble-max-width: 220;   /* px cap on bubble width (both surfaces); also the "full line" reference JS scales the hold time against */
 
     /* Quote typewriter: the two selectable per-char gaps; punctuation adds the pause vars (end marks the full pause, mid marks half). Sentences shorter than min-words merge. */
@@ -106,8 +107,14 @@
     --cc-blog-handle-digit-max: 3;       /* most trailing digits */
     --cc-blog-handle-max-len: 7;         /* max characters per handle word */
 
+    /* Sidebar icon column: how fast a child-group row slides open and closed. */
+    --cc-icon-group-slide: 200ms;
+
     /* Universal hijack transition: the ONE fade every takeover uses, in and out. Also the chyron scroll's start delay, so the bar is fully in before the strip moves. */
     --cc-hijack-fade: 200ms;
+
+    /* Roleplay option bar: idle time before the row returns to the first level (any pointer activity over the bar re-arms it). */
+    --cc-roleplay-idle-reset: 30000ms;
 
     /* News chyron (cadence comes from the news interval setting, not here). */
     --cc-news-chyron-max: 3;        /* max headlines per pass; each pass rolls 1..max */

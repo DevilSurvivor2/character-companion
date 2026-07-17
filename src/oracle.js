@@ -178,6 +178,8 @@ class Oracle {
         const vipCtx = Object.assign(choiceRules(vip.vars), { patron, modifier: vip.modifier || vip.name, topic });
         // Sentence 1 carries the JS-built prefix (quoted modifier via feedSpan); follow-ups are bare asides. Only the reaction needs the engine.
         const reaction = this.evaluate((this.reactionBags[vip.name] ??= new Bag()).next(vip.reactions), vipCtx);
+        if (!reaction)
+            return;
         let line = `The ${patron} ${feedSpan(`"${vipCtx.modifier}"`)} ${reaction}.`;
         if (vip.asides.length) {
             const r = Math.random(), t = tuning();

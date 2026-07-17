@@ -253,24 +253,29 @@ function spriteTopInsetFraction(url) {
             let frac = 0;
             try {
                 const w = img.naturalWidth, h = img.naturalHeight;
+                if (w <= 0 || h <= 0)
+                    throw new Error("empty image");
+                const scale = Math.min(1, tuning().bubbleInsetScanMax / Math.max(w, h));
+                const scanW = Math.max(1, Math.round(w * scale));
+                const scanH = Math.max(1, Math.round(h * scale));
                 const canvas = document.createElement("canvas");
-                canvas.width = w;
-                canvas.height = h;
+                canvas.width = scanW;
+                canvas.height = scanH;
                 const ctx = canvas.getContext("2d", { willReadFrequently: true });
-                ctx.drawImage(img, 0, 0);
-                const data = ctx.getImageData(0, 0, w, h).data;
+                ctx.drawImage(img, 0, 0, scanW, scanH);
+                const data = ctx.getImageData(0, 0, scanW, scanH).data;
                 // `|| 0` guards a pre-styles NaN read (alpha > NaN is always false).
                 const minAlpha = (tuning().bubbleInsetAlpha || 0) * 255;
                 let row = 0;
-                for (; row < h; row++) {
+                for (; row < scanH; row++) {
                     let opaque = false;
-                    for (let x = 0; x < w; x++) {
-                        if (data[(row * w + x) * 4 + 3] > minAlpha) { opaque = true; break; }
+                    for (let x = 0; x < scanW; x++) {
+                        if (data[(row * scanW + x) * 4 + 3] > minAlpha) { opaque = true; break; }
                     }
                     if (opaque)
                         break;
                 }
-                frac = h > 0 ? row / h : 0;
+                frac = row / scanH;
             }
             catch { frac = 0; }
             _spriteInsetCache.set(url, frac);
@@ -290,62 +295,24 @@ function bubbleHoldMs(bubbleEl, budget, text) {
     const perChar = budget / charsPerLine;
     return Math.max(T.quoteHoldMin, perChar * text.length);
 }
-// Split a quote into the sentences the typewriter reveals as consecutive bubbles: close a sentence where terminatorBreaks says so, then merge runs shorter than --cc-quote-min-words.
+const sentenceSegmenter = new Intl.Segmenter(undefined, { granularity: "sentence" });
+// Split a quote into the sentences the typewriter reveals as consecutive bubbles, then merge runs shorter than --cc-quote-min-words.
 function splitQuote(text) {
     const s = (text || "").replace(/\.{2,}/g, "…").trim();
     if (!s)
         return [];
+    const segments = [...sentenceSegmenter.segment(s)]
+        .flatMap(({ segment }) => segment.trim().split(/(?<=\S…)\s+(?=(?:['"“‘«(])?\p{Lu})/u))
+        .filter(Boolean);
     const frags = [];
-    let start = 0;
-    const re = /[.!?…]+/g;
-    let m;
-    while ((m = re.exec(s))) {
-        const end = m.index + m[0].length;
-        if (terminatorBreaks(s, m.index, m[0], end)) {
-            // Keep a closing quote/bracket on the terminator with its own sentence.
-            let e = end;
-            while (e < s.length && /['"”’»)\]]/.test(s[e])) e++;
-            frags.push(s.slice(start, e).trim());
-            start = e;
-        }
-    }
-    if (start < s.length) {
-        const tail = s.slice(start).trim();
-        if (tail) frags.push(tail);
+    for (const segment of segments) {
+        const previous = frags[frags.length - 1];
+        if (previous && /[!?]+['"”’»)\]]*$/.test(previous) && /^\p{Ll}/u.test(segment))
+            frags[frags.length - 1] += " " + segment;
+        else
+            frags.push(segment);
     }
     return mergeShortSentences(frags, tuning().quoteMinWords);
-}
-// Does the terminator run at [i, end) close the current sentence? ! ? always; an ellipsis only as a trailing mark before a capital; a period unless it's an abbreviation (internal dot, honorific, or initialism dot).
-function terminatorBreaks(s, i, run, end) {
-    if (/[!?]/.test(run)) {
-        let j = end;
-        while (j < s.length && /['"“‘«)\]]/.test(s[j])) j++;
-        while (j < s.length && /\s/.test(s[j])) j++;
-        if (j < s.length && /\p{Ll}/u.test(s[j])) return false;
-        return true;
-    }
-    if (run.includes("…")) {
-        if (i === 0 || /\s/.test(s[i - 1])) return false;
-        let j = end;
-        while (j < s.length && /\s/.test(s[j])) j++;
-        while (j < s.length && s[j] === "…") { j++; while (j < s.length && /\s/.test(s[j])) j++; }
-        if (j < s.length && /['"“‘«(]/.test(s[j])) j++;
-        return j >= s.length || /\p{Lu}/u.test(s[j]);
-    }
-    if (/[\p{L}\p{N}]/u.test(s[end] || "")) return false;
-    const prevMatch = s.slice(0, i).match(/[\p{L}]+$/u);
-    const prevWord = prevMatch ? prevMatch[0] : "";
-    const abbreviations = new Set(["mr", "mrs", "ms", "mx", "dr", "prof", "rev", "capt", "gen", "col", "maj", "sgt", "st", "mt", "lt", "cmdr", "gov", "sen", "rep", "jr", "sr", "etc", "vs", "al", "approx", "ave", "blvd", "dept", "est", "inc", "misc"]);
-    if (abbreviations.has(prevWord.toLowerCase())) return false;
-    if (prevWord.length === 1) {
-        let j = end;
-        while (j < s.length && /\s/.test(s[j])) j++;
-        if (j < s.length && /['"“‘«(]/.test(s[j])) j++;    
-        if (/\p{Ll}/u.test(s[j] || "")) return false;
-        if (s.slice(j).match(/^\p{Lu}\./u)) return false;
-        return true;
-    }
-    return true;
 }
 // Fold fragments shorter than `min` words forward into the next; a leftover short tail attaches to the previous fragment. A sentence-final … always flushes on its own.
 function mergeShortSentences(frags, min) {

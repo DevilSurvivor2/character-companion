@@ -109,13 +109,6 @@ button:not(.clickable-icon).cc-tab-active {
     display: none;
 }
 
-/* One-line intro at the top of each settings tab. */
-.cc-tab-intro {
-    margin-bottom: 12px;
-    color: var(--text-muted);
-    font-size: var(--font-ui-small);
-}
-
 /* Dual range: two sliders stacked with a value readout to the left. The first sits in flow; the second overlays it. */
 .cc-range {
     display: flex;

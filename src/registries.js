@@ -149,7 +149,7 @@ const VIP_SCHEMA = [
     // Per-VIP variables {name: [...]}, usable as $name inside frames.
     { key: "vars", coerce: strMap },
 ];
-// Mail template: Title/From/To/Content are RiScript lines. 'name' is the admin pill label.
+// Mail template: Title/From/To are RiScript lines; Content contains blank-line-delimited RiScript episodes. 'name' is the admin pill label.
 const MAIL_SCHEMA = [
     { key: "name", coerce: str },
     { key: "title", coerce: str },
@@ -158,8 +158,8 @@ const MAIL_SCHEMA = [
     { key: "content", coerce: str },
     { key: "enabled", coerce: bool(true) },
 ];
-// Program: a scheduled full-panel broadcast. 'background' is a plain stream-bg-style image field (no RiScript, drawn once per airing); 'content' is a multi-line RiScript script. 'schedule': 0 = off, 1..59 = that minute past every hour, 60 = the ":00" step (stored as 60 so it can't collide with off; the scheduler matches `schedule % 60`).
-const PROGRAM_SCHEMA = [
+// Show: a scheduled full-panel broadcast. 'background' is a plain stream-bg-style image field (no RiScript, drawn once per airing); 'content' is a multi-line RiScript script. 'schedule': 0 = off, 1..59 = that minute past every hour, 60 = the ":00" step (stored as 60 so it can't collide with off; the scheduler matches `schedule % 60`).
+const SHOW_SCHEMA = [
     { key: "label", coerce: str },
     { key: "background", coerce: str },
     { key: "content", coerce: str },
@@ -180,8 +180,6 @@ function newItem(schema, overrides) {
         out[f.key] = f.coerce(undefined);
     return Object.assign(out, overrides);
 }
-// First-run seed trigger: a shaped file is "empty" when every array value is empty (non-list values like activeCharacterId or constants don't count).
-const shapeIsEmpty = (o) => Object.values(o).every((v) => !Array.isArray(v) || v.length === 0);
 // Shipped starter content for first-run seeding.
 const SEED_CHARACTERS = {
     activeCharacterId: "seed-hero",
@@ -220,6 +218,18 @@ const SEED_STREAM = {
         ],
         vars: { hype: ["goated", "unreal", "elite", "cracked"], time: ["morning", "evening"] },
     }],
+};
+const SEED_ROLEPLAY = {
+    structure: "patrol > {rooftops, alley, docks} > twist\ndowntime > {hideout, tavern}",
+    tables: {
+        patrol: ["Sirens wail a few blocks over", "A cold wind sweeps the empty streets", "The scanner crackles with a fresh tip"],
+        rooftops: ["A shadow slips across the skyline", "Someone left a window open on the top floor", "The billboard lights flicker out one by one"],
+        alley: ["Two figures argue over a locked crate", "Fresh paint marks a gang's new turf", "A door that should be locked stands open"],
+        docks: ["A crane moves cargo long after closing time", "An unmarked boat idles by the pier", "The harbormaster's office is dark tonight"],
+        twist: ["[It's an ambush | The lead goes cold | An old rival steps into the light | $name gets there first]"],
+        hideout: ["The suit needs repairs before the next call", "Someone has been through the files", "$name naps through the afternoon"],
+        tavern: ["A stranger buys a round and asks about $name", "The bartender slides over a folded note", "A regular swears $they saw everything last night"],
+    },
 };
 const SEED_MAIL = {
     constants: { npc: ["The Metro Times", "City Hall", "an anonymous admirer", "YOUR EDITOR"] },
@@ -273,17 +283,17 @@ const SEED_NEWS = {
         "[STATS] $num<1-2>% rise in $role sightings",
     ],
 };
-const SEED_PROGRAM = {
-    programs: [{
-        id: "seed-program-1", label: "Evening news", schedule: 0,
-        background: "📺, 🌃",
-        content: "We interrupt your evening for a special bulletin.\nReports place $name near [downtown | the harbor] tonight.\nMore on this story as it develops. Back to you.",
+const SEED_SHOW = {
+    shows: [{
+        id: "seed-show-1", label: "Evening News", schedule: 0,
+        background: "🌃",
+        content: "We interrupt your evening for a special bulletin.\nReports place $name near downtown. \nMore on this story as it develops. Back to you.",
     }],
 };
 // Sibling data files (kept out of data.json); one row drives the generic load/save. Fields: prop (plugin field), file, shape (raw)=>in-memory object, create (write when genuinely MISSING, never on corrupt), seed (inline first-run content; omit to fall back to src/data/<file>, else ship empty), afterSave (side effects).
 const DATA_FILES = [
     {
-        prop: "characterData", file: "character-data.json", create: true, seed: () => SEED_CHARACTERS,
+        prop: "characterData", file: "character-data.json", create: true, seed: SEED_CHARACTERS,
         shape: (raw) => {
             const characters = coerceList(CHARACTER_SCHEMA, raw && raw.characters);
             // Active id must point at a surviving character.
@@ -295,14 +305,23 @@ const DATA_FILES = [
         afterSave: (p, rerender) => p.applyChange(rerender),
     },
     {
-        prop: "streamData", file: "stream-data.json", create: true, seed: () => SEED_STREAM,
+        prop: "streamData", file: "stream-data.json", create: true, seed: SEED_STREAM,
         shape: (raw) => {
             return { commentSets: coerceList(COMMENT_SET_SCHEMA, raw && raw.commentSets) };
         },
     },
     {
+        // Roleplay: the choice-structure blob + the random-table map behind the bottom bar's option row.
+        prop: "roleplayData", file: "roleplay-data.json", seed: SEED_ROLEPLAY,
+        shape: (raw) => {
+            raw = raw || {};
+            return { structure: str(raw.structure), tables: strMap(raw.tables) };
+        },
+        afterSave: (p) => p.applyChange(),
+    },
+    {
         // No inline seed: the bulky default lives in src/data/oracle-data.json and is resolved by the loader's DATA_SEEDS fallback.
-        prop: "oracleData", file: "oracle-data.json", create: false,
+        prop: "oracleData", file: "oracle-data.json",
         shape: (raw) => {
             raw = raw || {};
             return {
@@ -315,7 +334,7 @@ const DATA_FILES = [
         afterSave: (p) => p.eachView((view) => view.oracle.rebuild()),
     },
     {
-        prop: "mailData", file: "mail-data.json", create: false, seed: () => SEED_MAIL,
+        prop: "mailData", file: "mail-data.json", seed: SEED_MAIL,
         shape: (raw) => {
             raw = raw || {};
             return {
@@ -326,7 +345,7 @@ const DATA_FILES = [
     },
     {
         // Blog is a flat line list + constants map — no per-item schema.
-        prop: "blogData", file: "blog-data.json", create: false, seed: () => SEED_BLOG,
+        prop: "blogData", file: "blog-data.json", seed: SEED_BLOG,
         shape: (raw) => {
             raw = raw || {};
             return {
@@ -337,7 +356,7 @@ const DATA_FILES = [
     },
     {
         // News mirrors blog's shape; one pool serves both news faces (feed beat / chyron).
-        prop: "newsData", file: "news-data.json", create: false, seed: () => SEED_NEWS,
+        prop: "newsData", file: "news-data.json", seed: SEED_NEWS,
         shape: (raw) => {
             raw = raw || {};
             return {
@@ -348,10 +367,10 @@ const DATA_FILES = [
     },
     {
         // afterSave reconciles the open panels so a schedule edit reaches the scheduler.
-        prop: "programData", file: "program-data.json", create: false, seed: () => SEED_PROGRAM,
+        prop: "showData", file: "show-data.json", seed: SEED_SHOW,
         shape: (raw) => {
             raw = raw || {};
-            return { programs: coerceList(PROGRAM_SCHEMA, raw.programs) };
+            return { shows: coerceList(SHOW_SCHEMA, raw.shows) };
         },
         afterSave: (p) => p.applyChange(),
     },
@@ -397,6 +416,8 @@ const SETTINGS_SCHEMA = [
     { key: "newsMinMs", coerce: bounded(120000, 30000, 1800000) },
     { key: "newsMaxMs", coerce: bounded(360000, 30000, 1800000) },
     { key: "newsToFeed", coerce: bool(false) },
+    { key: "roleplayEnabled", coerce: bool(false) },
+    { key: "roleplayShared", coerce: bool(true) },
     { key: "commentFont", coerce: str },
     { key: "giftEmojiFont", coerce: str },
     { key: "giftEmojis", coerce: str },
@@ -416,6 +437,6 @@ function genId() {
 module.exports = {
     AESTHETICS, ANIMS_BY_ROLE, ANIM_BY_NAME, ANIM_POOLS, CHARACTER_SCHEMA, CHARACTER_TOGGLES,
     CLEARABLE, COMMENT_SET_SCHEMA, DATA_FILES, DATA_FILE_BY_PROP, FLAG_MAPS, SETTINGS_SCHEMA,
-    HOLD_SHAKES, MAIL_SCHEMA, ORACLE_PATRON_FALLBACK, ORACLE_SYS_FALLBACK, PROGRAM_SCHEMA,
-    SPECIAL_EFFECTS, VIP_SCHEMA, boolMap, newItem, shapeIsEmpty,
+    HOLD_SHAKES, MAIL_SCHEMA, ORACLE_PATRON_FALLBACK, ORACLE_SYS_FALLBACK, SHOW_SCHEMA,
+    SPECIAL_EFFECTS, VIP_SCHEMA, boolMap, newItem,
 };

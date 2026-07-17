@@ -20,7 +20,33 @@
     z-index: 2;
     display: flex;
     flex-direction: column;
+    align-items: flex-end;
     gap: 6px;
+}
+
+/* Child-group row (a SIDEBAR_BUTTONS row with `children`): folding slides the rest full-size to the right, stacking them behind the first button as they fade; hover or focus slides them back out, right edge staying put. */
+.cc-icon-group {
+    display: flex;
+}
+.cc-icon-group .cc-icon-btn {
+    flex: none;
+    transition:
+        margin-left var(--cc-icon-group-slide) ease,
+        opacity var(--cc-icon-group-slide) ease;
+}
+/* The first button is the group's collapsed face; keep it on top so the fold tucks the rest behind it. */
+.cc-icon-group .cc-icon-btn:first-child {
+    position: relative;
+    z-index: 1;
+}
+.cc-icon-group .cc-icon-btn + .cc-icon-btn {
+    margin-left: 6px;
+}
+/* The negative margin equals the button width, so every folded button lands exactly under the face. Unfolded while hovered or keyboard-focused — :focus-visible, not :focus-within, so a click's lingering focus can't pin the group open after the cursor leaves. The .cc-icon-col prefix keeps this opacity 0 above the streaming halo's opacity 1 below. */
+.cc-icon-col .cc-icon-group:not(:hover):not(:has(:focus-visible)) .cc-icon-btn + .cc-icon-btn {
+    margin-left: -30px;
+    opacity: 0;
+    pointer-events: none;
 }
 
 .cc-icon-btn {
@@ -58,12 +84,12 @@
     opacity: 1;
 }
 
-/* When a backdrop shows (stream bg or a program airing's cover), give the icon glyph a halo for legibility. */
-.cc-root:has(.cc-anchor.cc-streaming, .cc-program-cover:not(.cc-hijack-hidden)) .cc-icon-btn:not(.cc-icon-active) {
+/* When a backdrop shows (stream bg or a show airing's cover), give the icon glyph a halo for legibility. */
+.cc-root:has(.cc-anchor.cc-streaming, .cc-show-cover:not(.cc-hijack-hidden)) .cc-icon-btn:not(.cc-icon-active) {
     color: var(--text-normal);
     opacity: 1;
 }
-.cc-root:has(.cc-anchor.cc-streaming, .cc-program-cover:not(.cc-hijack-hidden)) .cc-icon-btn:not(.cc-icon-active) .svg-icon {
+.cc-root:has(.cc-anchor.cc-streaming, .cc-show-cover:not(.cc-hijack-hidden)) .cc-icon-btn:not(.cc-icon-active) .svg-icon {
     filter:
         drop-shadow(0 0 0px var(--text-normal)) 
         drop-shadow(0 0 1px var(--background-primary));
@@ -93,12 +119,12 @@
     filter: blur(1px);
 }
 
-/* Program cover layer: the airing's image fades in crisp ABOVE the sprite and backdrop (same z-index as the sprite wrap; later DOM order wins), blocking their pointer events. The fade rides the universal cc-hijack classes; --cc-program-bg keeps its last image so the fade-out still shows the airing. Effects and overlays sit higher. */
-.cc-program-cover {
+/* Show cover layer: the airing's image fades in crisp ABOVE the sprite and backdrop (same z-index as the sprite wrap; later DOM order wins), blocking their pointer events. The fade rides the universal cc-hijack classes; --cc-show-bg keeps its last image so the fade-out still shows the airing. Effects and overlays sit higher. */
+.cc-show-cover {
     position: absolute;
     inset: 0;
     z-index: 1;
-    background-image: var(--cc-program-bg, none);
+    background-image: var(--cc-show-bg, none);
     background-size: cover;
     background-position: center;
 }

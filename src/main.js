@@ -1,14 +1,14 @@
 "use strict";
 // Entry point: wires the view, ribbon + command, settings tab, the stage, and the generic sibling-data-file load/save.
 const { Notice, Plugin } = require("obsidian");
-const { DATA_FILES, DATA_FILE_BY_PROP, FLAG_MAPS, SETTINGS_SCHEMA, boolMap, shapeIsEmpty } = require("./registries.js");
+const { DATA_FILES, DATA_FILE_BY_PROP, FLAG_MAPS, SETTINGS_SCHEMA, boolMap } = require("./registries.js");
 // Build-injected default seeds, keyed by sibling-file name — one entry per src/data/*.json (see esbuild.config.mjs).
 const DATA_SEEDS = require("virtual:seed-data");
 const { whenStyled } = require("./toolkit.js");
 const { RiScriptEngine } = require("./riscriptengine.js");
 const { CompanionStage } = require("./companionstage.js");
 const { CompanionView, VIEW_TYPE_COMPANION } = require("./companionview.js");
-const { CompanionSettingTab } = require("./companionsettingtab.js");
+const { SettingTab } = require("./settingtab.js");
 class CharacterCompanionPlugin extends Plugin {
     async onload() {
         await this.loadSettings();
@@ -24,7 +24,7 @@ class CharacterCompanionPlugin extends Plugin {
                 void this.activateView();
             },
         });
-        this.addSettingTab(new CompanionSettingTab(this.app, this));
+        this.addSettingTab(new SettingTab(this.app, this));
         this.stage = new CompanionStage(this);
         this.app.workspace.onLayoutReady(() => {
             this.register(whenStyled(() => this.stage.mount()));
@@ -66,31 +66,29 @@ class CharacterCompanionPlugin extends Plugin {
         const raw = await this.loadData();
         this.firstRun = raw == null;
         const loaded = raw && typeof raw === "object" && !Array.isArray(raw) ? Object.assign({}, raw) : {};
-        // Migrate the pre-tri-state quoteTypewriter boolean to the string form.
-        if (typeof loaded.quoteTypewriter === "boolean")
-            loaded.quoteTypewriter = loaded.quoteTypewriter ? "slow" : "off";
-        // Migrate the pre-rename stream interval keys to the `<key>MinMs`/`<key>MaxMs` convention.
-        if (typeof loaded.streamCommentMinMs === "number")
-            loaded.streamMinMs = loaded.streamCommentMinMs;
-        if (typeof loaded.streamCommentMaxMs === "number")
-            loaded.streamMaxMs = loaded.streamCommentMaxMs;
         const s = Object.fromEntries(SETTINGS_SCHEMA.map(({ key, coerce }) => [key, coerce(loaded[key])]));
         // Re-normalise each enable map: keep known flags, default new names.
         for (const [key, names, def] of FLAG_MAPS)
             s[key] = boolMap(names, loaded[key], def);
         this.settings = s;
+        this.dataFileWriteLocks = new Set();
+        this.writeQueue = Promise.resolve();
         // The sibling files are independent, so read them in parallel — this sits on the plugin-load critical path.
         await Promise.all(DATA_FILES.map((desc) => this.loadDataFile(desc)));
         // Persist the cleaned shape so anything stale in data.json is dropped.
-        await this.saveData(this.settings);
+        await this.persistSettings();
     }
     // Generic sibling-file load: read, shape, and seed the file when genuinely MISSING. Never seed on corrupt — readJsonFile backed it up, and rewriting would overwrite the user's only copy.
     // Seed priority: the row's inline seed, else src/data/<file> (DATA_SEEDS), else ship empty.
     async loadDataFile(desc) {
-        const { data, existed } = await this.readJsonFile(this.manifest.dir + "/" + desc.file);
+        const { data, existed, writable } = await this.readJsonFile(this.manifest.dir + "/" + desc.file);
+        if (!writable)
+            this.dataFileWriteLocks.add(desc.prop);
+        else
+            this.dataFileWriteLocks.delete(desc.prop);
         let shaped = desc.shape(data);
-        if (!existed && shapeIsEmpty(shaped)) {
-            const seedRaw = desc.seed ? await desc.seed(this) : DATA_SEEDS[desc.file];
+        if (!existed) {
+            const seedRaw = desc.seed ?? DATA_SEEDS[desc.file];
             if (seedRaw)
                 shaped = desc.shape(seedRaw);
         }
@@ -101,39 +99,53 @@ class CharacterCompanionPlugin extends Plugin {
     // THE save API for every per-file list: write the in-memory shape, then run the file's afterSave side effects.
     async saveDataFile(prop, rerender = false) {
         const desc = DATA_FILE_BY_PROP[prop];
-        await this.writeJsonFile(this.manifest.dir + "/" + desc.file, this[prop]);
+        if (this.dataFileWriteLocks.has(prop)) {
+            new Notice("Character Companion: " + desc.file + " was not loaded safely, so it will not be overwritten. Repair the file and reload the plugin before saving changes.", 12000);
+            return false;
+        }
+        const path = this.manifest.dir + "/" + desc.file;
+        await this.queueWrite(() => this.writeJsonFile(path, this[prop]));
         if (desc.afterSave)
             desc.afterSave(this, rerender);
+        return true;
     }
     // Read a sibling JSON file; only missing files are safe to seed.
     async readJsonFile(path) {
         const adapter = this.app.vault.adapter;
         if (!(await adapter.exists(path)))
-            return { data: null, existed: false };
+            return { data: null, existed: false, writable: true };
         let text;
         try {
             text = await adapter.read(path);
         }
         catch {
-            new Notice("Character Companion: " + path.split("/").pop() + " couldn't be read. No changes were made; that list stays empty until the file can be read again.", 12000);
-            return { data: null, existed: true };
+            new Notice("Character Companion: " + path.split("/").pop() + " couldn't be read. It will not be overwritten; repair it and reload the plugin.", 12000);
+            return { data: null, existed: true, writable: false };
         }
         try {
-            return { data: JSON.parse(text), existed: true };
+            return { data: JSON.parse(text), existed: true, writable: true };
         }
         catch {
             let backedUp = false;
             try { await adapter.write(path + ".corrupt-" + Date.now() + ".bak", text); backedUp = true; } catch { /* best effort */ }
             const backup = backedUp ? "A .bak copy was saved beside it." : "A backup could not be saved.";
-            new Notice("Character Companion: " + path.split("/").pop() + " contains invalid JSON. " + backup + " That list stays empty until the file is repaired or you re-add its items.", 12000);
-            return { data: null, existed: true };
+            new Notice("Character Companion: " + path.split("/").pop() + " contains invalid JSON. " + backup + " It will not be overwritten; repair it and reload the plugin.", 12000);
+            return { data: null, existed: true, writable: false };
         }
     }
     async writeJsonFile(path, obj) {
         await this.app.vault.adapter.write(path, JSON.stringify(obj, null, 2));
     }
+    // Serialize every save; swallowing only the prior failure keeps the next attempt available.
+    queueWrite(write) {
+        this.writeQueue = this.writeQueue.catch(() => undefined).then(write);
+        return this.writeQueue;
+    }
+    persistSettings() {
+        return this.queueWrite(() => this.saveData(this.settings));
+    }
     async saveSettings(rerender = false) {
-        await this.saveData(this.settings);
+        await this.persistSettings();
         this.applyChange(rerender);
     }
     // Reconcile open UI after a save: full=true re-renders panels, else the panel's own idempotent sync() applies everything in place. Always refreshes the stage.

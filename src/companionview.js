@@ -6,15 +6,18 @@ const { Walker } = require("./walker.js");
 const { CommentFeed } = require("./commentfeed.js");
 const { Aesthetics } = require("./aesthetics.js");
 const { Oracle } = require("./oracle.js");
-// Sidebar-panel action buttons: run(view) is the click, active(view) lights it as a toggle.
+// Sidebar-panel action buttons: run(view) is the click, active(view) lights it as a toggle. A row with `children` renders as a group collapsed to its first child; hovering slides it open leftward showing every child (panel.css).
 const SIDEBAR_BUTTONS = [
     { icon: "shuffle", label: "Show another character", run: (v) => v.pickAnotherCharacter() },
     { icon: "settings", label: "Open plugin settings", run: (v) => v.openPluginSettings() },
-    { icon: "radio", label: "Toggle stream mode", run: (v) => v.toggleMode("stream"), active: (v) => v.plugin.settings.streamEnabled },
-    { icon: "sparkles", label: "Toggle oracle mode", run: (v) => v.toggleMode("oracle"), active: (v) => v.plugin.settings.oracleEnabled },
-    { icon: "mail", label: "Toggle mail mode", run: (v) => v.toggleMode("mail"), active: (v) => v.plugin.settings.mailEnabled },
-    { icon: "at-sign", label: "Toggle blog mode", run: (v) => v.toggleMode("blog"), active: (v) => v.plugin.settings.blogEnabled },
-    { icon: "newspaper", label: "Toggle news mode", run: (v) => v.toggleMode("news"), active: (v) => v.plugin.settings.newsEnabled },
+    { children: [
+        { icon: "radio", label: "Toggle stream mode", run: (v) => v.toggleMode("stream"), active: (v) => v.plugin.settings.streamEnabled },
+        { icon: "sparkles", label: "Toggle oracle mode", run: (v) => v.toggleMode("oracle"), active: (v) => v.plugin.settings.oracleEnabled },
+        { icon: "mail", label: "Toggle mail mode", run: (v) => v.toggleMode("mail"), active: (v) => v.plugin.settings.mailEnabled },
+        { icon: "at-sign", label: "Toggle blog mode", run: (v) => v.toggleMode("blog"), active: (v) => v.plugin.settings.blogEnabled },
+        { icon: "newspaper", label: "Toggle news mode", run: (v) => v.toggleMode("news"), active: (v) => v.plugin.settings.newsEnabled },
+    ] },
+    { icon: "dices", label: "Toggle roleplay mode", run: (v) => v.toggleMode("roleplay"), active: (v) => v.plugin.settings.roleplayEnabled },
 ];
 // Feed sources: one row drives bag/stop/timer/sync. pool = draw list, push = one beat. Naming convention is load-bearing: interval settings are `<key>MinMs`/`<key>MaxMs`, the enable flag `<key>Enabled`, and the view auto-creates `<key>Bag`/`<key>Stop`.
 const FEED_SOURCES = [
@@ -67,9 +70,9 @@ class CompanionView extends ItemView {
         this.bgSig = "";
         this.bgBag = new Bag();
         this.sidebarBag = new Bag();
-        // Program state: the minute-boundary scheduler's stop handle and the airing program (null = none) as { url, lines }.
-        this.programStop = null;
-        this.program = null;
+        // Show state: the minute-boundary scheduler's stop handle and the airing show (null = none) as { url, lines }.
+        this.showStop = null;
+        this.show = null;
         // The aesthetics overlay; owns its own DOM and timers, rebuilt per render.
         this.aesthetics = new Aesthetics(this);
     }
@@ -154,7 +157,7 @@ class CompanionView extends ItemView {
         if (key === "stream" && on)
             this.aesthetics.resetCounters();
         this.plugin.eachView((view) => view.sync());
-        void this.plugin.saveData(this.settings);
+        void this.plugin.persistSettings();
         if (key === "stream")
             this.walker?.wake();
     }
@@ -193,7 +196,7 @@ class CompanionView extends ItemView {
             running[s.key] = this.settings[s.key + "Enabled"] && live;
         const anySource = FEED_SOURCES.some((s) => running[s.key]);
         const oracleRunning = this.settings.oracleEnabled && live;
-        const programScheduled = live && this.plugin.programData.programs.some((p) => p.schedule > 0);
+        const showScheduled = live && this.plugin.showData.shows.some((s) => s.schedule > 0);
         if (this.walker)
             live ? this.walker.resumeRest() : this.walker.pauseRest();
         // The feed is shared: mount it while ANY mode wants it, drop it when none do.
@@ -202,9 +205,9 @@ class CompanionView extends ItemView {
         else
             this.feed.unmount();
         // Load the shared engine (desktop-only) whenever anything on-screen is templated. A failure latches with a Notice; only templated lines drop, plain ones still push.
-        const wantEngine = anySource || programScheduled;
+        const wantEngine = anySource || showScheduled || (this.settings.roleplayEnabled && live);
         if (wantEngine && !this.plugin.riscript.loaded && !this.plugin.riscript.loadFailed)
-            this.plugin.riscript.ensure().catch(() => new Notice("Character Companion: stream comment variables need the RiScript engine in lib/ (desktop only). Plain comments still work."));
+            this.plugin.riscript.ensure().catch(() => new Notice("Character Companion: templated content needs the RiScript engine in lib/ (desktop only). Plain content still works."));
         // One reconciled random-interval timer per source row.
         for (const s of FEED_SOURCES)
             this.syncTimer(s.key + "Stop", running[s.key],
@@ -215,13 +218,13 @@ class CompanionView extends ItemView {
         this.syncTimer("bgStop", running.stream,
             () => ({ lo: this.settings.streamBgMinMs, hi: this.settings.streamBgMaxMs }),
             () => { this.bgUrl = this.nextBg(); this.paintBackground(); });
-        // Program scheduler: a self-realigning tick at each minute boundary.
-        this.syncTimer("programStop", programScheduled,
+        // Show scheduler: a self-realigning tick at each minute boundary.
+        this.syncTimer("showStop", showScheduled,
             () => { const ms = 60000 - (Date.now() % 60000); return { lo: ms, hi: ms }; },
-            () => this.checkPrograms());
+            () => this.checkShows());
         // A blur (or the last schedule going off) ends any airing; this sync's own tail reconciles the cover + bar — no second pass.
-        if (!programScheduled)
-            this.program = null;
+        if (!showScheduled)
+            this.show = null;
         this.feed.applyFont();
         this.paintBackground();
         this.aesthetics.sync();
@@ -236,18 +239,19 @@ class CompanionView extends ItemView {
         const line = R.evalTrim(item.text, ctx);
         if (line) this.feed.push(line);
     }
-    // Evaluate a mail template's Title/From/To/Content, push as a structured bubble.
+    // Evaluate a mail template's header plus one blank-line-delimited content episode, push as a structured bubble.
     pushMail(tpl) {
         if (!tpl) return;
         const R = this.plugin.riscript;
-        if (R.pending(tpl.title + tpl.from + tpl.to + tpl.content)) return;
+        const contentTemplate = pick(tpl.content.split(/\n[ \t]*\n/).map((episode) => episode.trim()).filter(Boolean));
+        if (!contentTemplate || R.pending(tpl.title + tpl.from + tpl.to + contentTemplate)) return;
         const ctx = this.charCtx(this.plugin.mailData.constants);
         const ev = (line, extra) => R.evalTrim(line, extra ? Object.assign({}, ctx, extra) : ctx);
         const title = ev(tpl.title);
         const from = ev(tpl.from);
         const to = ev(tpl.to);
         // Content sees $to too, so the body can repeat the addressee ("Hey $to, ...").
-        const content = ev(tpl.content, { to });
+        const content = ev(contentTemplate, { to });
         this.feed.push([
             { cls: "title", text: title },
             { cls: "from", text: from && "From: " + from },
@@ -311,12 +315,11 @@ class CompanionView extends ItemView {
         return { section: section && R.evalTrim(section, ctx), body: R.evalTrim(body, ctx) };
     }
     // The shown character's vars with a mode's own constants layered on top as choice rules.
-    charCtx(vars) {
-        return Object.assign({}, this.streamCtx(), choiceRules(vars));
+    charCtx(vars, character) {
+        return Object.assign({}, this.streamCtx(character), choiceRules(vars));
     }
     // Character template vars with safe defaults. Pronouns are slash-separated in subject/object/possessive forms.
-    streamCtx() {
-        const c = this.getActiveCharacter();
+    streamCtx(c = this.getActiveCharacter()) {
         const name = (c && c.name && c.name.trim()) || "The streamer";
         const pr = ((c && c.pronouns) || "they/them/their").split("/").map((s) => s.trim());
         const deeds = (c && c.deeds && c.deeds.length) ? c.deeds : ["do amazing things"];
@@ -342,26 +345,30 @@ class CompanionView extends ItemView {
     nextBg() {
         return this.bgBag.next(resolvePathList(this.app, this.settings.streamBackgrounds));
     }
-    // Scheduler tick (one per minute boundary): air a program whose minute matches the clock (`% 60` folds the ":00"-as-60 step back to 0), ties broken at random. One airing at a time; it holds ONE backdrop for the whole run, and the program bottom-bar occupant drives the lines and calls endProgram when done.
-    checkPrograms() {
-        if (this.program)
+    // Scheduler tick (one per minute boundary): air a show whose minute matches the clock (`% 60` folds the ":00"-as-60 step back to 0), ties broken at random. One airing at a time; it holds ONE backdrop for the whole run, and the show bottom-bar occupant drives the lines and calls endShow when done.
+    checkShows() {
+        if (this.show)
             return;
         const minute = new Date().getMinutes();
-        const due = pick(this.plugin.programData.programs.filter((p) => p.schedule > 0 && p.schedule % 60 === minute && p.content.trim()));
+        const due = pick(this.plugin.showData.shows.filter((s) => s.schedule > 0 && s.schedule % 60 === minute && s.content.trim()));
         if (!due)
             return;
-        const lines = due.content.split("\n").map((s) => s.trim()).filter(Boolean);
+        // A blank line separates episodes; one is drawn per airing. Within an episode a single newline separates lines.
+        const episode = pick(due.content.split(/\n[ \t]*\n/).map((e) => e.trim()).filter(Boolean));
+        if (!episode)
+            return;
+        const lines = episode.split("\n").map((s) => s.trim()).filter(Boolean);
         // Null url → no backdrop hijack; content plays over the normal scene.
         const bgUrls = resolvePathList(this.app, due.background);
-        this.program = { url: bgUrls.length ? pick(bgUrls) : null, lines };
+        this.show = { url: bgUrls.length ? pick(bgUrls) : null, lines };
         this.paintBackground();
         this.aesthetics.sync();
     }
     // End the current airing and reconcile the cover layer + bottom bar. Idempotent.
-    endProgram() {
-        if (!this.program)
+    endShow() {
+        if (!this.show)
             return;
-        this.program = null;
+        this.show = null;
         this.paintBackground();
         this.aesthetics.sync();
     }
@@ -370,8 +377,8 @@ class CompanionView extends ItemView {
         for (const { key } of FEED_SOURCES)
             this.syncTimer(key + "Stop", false);
         this.syncTimer("bgStop", false);
-        this.syncTimer("programStop", false);
-        this.endProgram();
+        this.syncTimer("showStop", false);
+        this.endShow();
         this.oracle.unmount();
         this.feed.unmount();
         this.teardownEffects();
@@ -398,14 +405,14 @@ class CompanionView extends ItemView {
         if (streaming && !this.bgUrl)
             this.bgUrl = this.nextBg();
         const running = streaming && this.isLive();
-        const program = (this.program && this.program.url && this.isLive()) ? this.program.url : null;
+        const show = (this.show && this.show.url && this.isLive()) ? this.show.url : null;
         anchor.classList.toggle("cc-streaming", !!(streaming && this.bgUrl));
         anchor.setCssProps({ "--cc-bg": streaming && this.bgUrl ? `url("${this.bgUrl}")` : "none" });
-        // --cc-program-bg is only ever written, never cleared, so the image survives the cover's own fade-out (the universal hijack transition).
-        const cover = anchor.querySelector(".cc-program-cover");
-        cover.classList.toggle("cc-hijack-hidden", !program);
-        if (program)
-            cover.setCssProps({ "--cc-program-bg": `url("${program}")` });
+        // --cc-show-bg is only ever written, never cleared, so the image survives the cover's own fade-out (the universal hijack transition).
+        const cover = anchor.querySelector(".cc-show-cover");
+        cover.classList.toggle("cc-hijack-hidden", !show);
+        if (show)
+            cover.setCssProps({ "--cc-show-bg": `url("${show}")` });
         // Reconcile effects: toggle each class, build/teardown DOM to match.
         if (!this.builtFx || this.builtFx.anchor !== anchor) {
             this.teardownEffects();
@@ -460,7 +467,7 @@ class CompanionView extends ItemView {
         const urls = resolvePathList(this.app, character.spritePath);
         if (urls.length === 0) {
             // Root-level notice, NOT inside an anchor, so paintBackground never paints a stream backdrop behind the error.
-            root.createDiv({ cls: "cc-empty", text: 'Sprite not found: "' + character.spritePath + '". Check the path in settings.' });
+            root.createDiv({ cls: "cc-empty", text: "Sprite not found: \"" + character.spritePath + "\". Check the path in settings." });
             return;
         }
         // On the root so both the image cap and the bubble's resting height inherit it.
@@ -469,8 +476,8 @@ class CompanionView extends ItemView {
         const anchor = root.createDiv({ cls: "cc-anchor" });
         const spriteWrap = anchor.createDiv({ cls: "cc-sprite-wrap" });
         const sprite = spriteWrap.createEl("img", { cls: "cc-sprite" });
-        // Program cover layer, created hidden AFTER the sprite wrap (same z-index — DOM order puts it on top); paintBackground fades it in over sprite + backdrop during an airing.
-        anchor.createDiv({ cls: "cc-program-cover cc-hijack cc-hijack-hidden" });
+        // Show cover layer, created hidden AFTER the sprite wrap (same z-index — DOM order puts it on top); paintBackground fades it in over sprite + backdrop during an airing.
+        anchor.createDiv({ cls: "cc-show-cover cc-hijack cc-hijack-hidden" });
         // Bubble lives on the panel's own <body> so the leaf frame can never clip it; being off-panel, root.empty() can't reap it — cleanupWalker removes it.
         const bubble = root.doc.body.createDiv({ cls: "cc-bubble" });
         this.walker = new Walker(null, this.plugin, character, { wrapEl: spriteWrap, imgEl: sprite, bubbleEl: bubble, bubbleAnchorEl: sprite }, urls, 0);
@@ -480,11 +487,20 @@ class CompanionView extends ItemView {
         const col = root.createDiv({ cls: "cc-icon-col" });
         // Track the toggle buttons so sync() can relight them without re-rendering.
         this.iconButtons = [];
-        for (const def of SIDEBAR_BUTTONS) {
-            const btn = col.createEl("button", { cls: "cc-icon-btn", attr: { "aria-label": def.label } });
+        const addButton = (parent, def) => {
+            const btn = parent.createEl("button", { cls: "cc-icon-btn", attr: { "aria-label": def.label } });
             setIcon(btn, def.icon);
             btn.addEventListener("click", () => def.run(this));
             this.iconButtons.push({ def, btn });
+        };
+        for (const def of SIDEBAR_BUTTONS) {
+            if (def.children) {
+                const group = col.createDiv({ cls: "cc-icon-group" });
+                for (const child of def.children)
+                    addButton(group, child);
+            }
+            else
+                addButton(col, def);
         }
     }
     // Foreground AND on screen AND in the main window (a collapsed sidebar / background tab is display:none, so offsetParent is null). Computed fresh, never cached.
