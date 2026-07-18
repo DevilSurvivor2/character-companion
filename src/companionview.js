@@ -154,12 +154,14 @@ class CompanionView extends ItemView {
     // Flip one feed mode's `<key>Enabled` flag and apply it IN PLACE via sync() — no re-render, which would tear the walker down mid-beat. Persists via bare saveData: the immediate sync of every open panel owns the reconcile, and saveSettings' applyChange tail would reconcile the same panels a second time.
     toggleMode(key) {
         const on = this.settings[key + "Enabled"] = !this.settings[key + "Enabled"];
-        if (key === "stream" && on)
-            this.aesthetics.resetCounters();
-        this.plugin.eachView((view) => view.sync());
+        this.plugin.eachView((view) => {
+            if (key === "stream" && on)
+                view.aesthetics.resetCounters();
+            view.sync();
+            if (key === "stream")
+                view.walker?.wake();
+        });
         void this.plugin.persistSettings();
-        if (key === "stream")
-            this.walker?.wake();
     }
     // Reflect each toggle button's `active` predicate onto its lit state, on every panel.
     relightIconButtons() {

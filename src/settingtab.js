@@ -16,19 +16,19 @@ const PILL_GRIDS = {
         // Rerender so the open panel reflects a newly included / excluded character at once.
         save: (t) => t.plugin.saveDataFile("characterData", true),
     },
-    commentSet: {
+    comment: {
         empty: "No comment sets yet. Add one in the Chat tab.",
-        entries: (t) => t.enablePills(t.plugin.streamData.commentSets),
+        entries: (t) => t.enablePills(t.plugin.streamData.commentSets, "label"),
         save: (t) => t.plugin.saveDataFile("streamData"),
     },
     vip: {
-        empty: "No patrons yet. Add one in the VIP tab.",
+        empty: "No VIP patrons yet. Add one in the VIP tab.",
         entries: (t) => t.enablePills(t.plugin.oracleData.vips),
         save: (t) => t.plugin.saveDataFile("oracleData"),
     },
     mail: {
         empty: "No mail templates yet. Add one in the Inbox tab.",
-        entries: (t) => t.enablePills(t.plugin.mailData.mailTemplates),
+        entries: (t) => t.enablePills(t.plugin.mailData.mailTemplates, "label"),
         save: (t) => t.plugin.saveDataFile("mailData"),
     },
     // Effects + aesthetics: no empty state, no explicit save — their flag maps live in data.json, so the default saveSettings persists and repaints in place.
@@ -48,9 +48,9 @@ const LIST_EDITORS = [
         onDelete: (t, id) => { if (t.plugin.characterData.activeCharacterId === id)
             t.plugin.characterData.activeCharacterId = t.plugin.characterData.characters[0]?.id ?? null; },
     },
-    { editor: "commentEditor", noun: "comment set", plural: "comment sets", data: "streamData", items: "commentSets", label: "name", schema: COMMENT_SET_SCHEMA, seed: { name: "New comment set" }, render: "renderCommentSetBody", grids: ["commentSet"] },
-    { editor: "vipEditor", noun: "patron", plural: "patrons", data: "oracleData", items: "vips", label: "name", schema: VIP_SCHEMA, seed: { name: "New patron" }, render: "renderVipBody", grids: ["vip"] },
-    { editor: "mailEditor", noun: "mail template", plural: "mail templates", data: "mailData", items: "mailTemplates", label: "name", schema: MAIL_SCHEMA, seed: { name: "New mail template" }, render: "renderMailBody", grids: ["mail"] },
+    { editor: "commentEditor", noun: "comment set", plural: "comment sets", data: "streamData", items: "commentSets", label: "label", schema: COMMENT_SET_SCHEMA, seed: { label: "New comment set" }, render: "renderCommentBody", grids: ["comment"] },
+    { editor: "vipEditor", noun: "VIP patron", plural: "VIP patrons", data: "oracleData", items: "vips", label: "name", schema: VIP_SCHEMA, seed: { name: "New VIP patron" }, render: "renderVipBody", grids: ["vip"] },
+    { editor: "mailEditor", noun: "mail template", plural: "mail templates", data: "mailData", items: "mailTemplates", label: "label", schema: MAIL_SCHEMA, seed: { label: "New mail template" }, render: "renderMailBody", grids: ["mail"] },
     { editor: "showEditor", noun: "show", plural: "shows", data: "showData", items: "shows", label: "label", schema: SHOW_SCHEMA, seed: { label: "New show" }, render: "renderShowBody", grids: [] },
 ];
 // A slider/range labelled "sec"/"min" edits an ms-STORED setting: the <input> runs in ms, min/max/step are authored in the readable unit and scaled through this map, and only the readout divides back. Any other unit ("%", "px") is label-only (factor 1).
@@ -87,7 +87,7 @@ class SettingTab extends PluginSettingTab {
             { id: "stream", label: "Stream", render: (c) => this.renderStreamTab(c) },
             { id: "comment", label: "Chat", icon: "message-circle-more", render: (c) => this.renderCommentTab(c) },
             { id: "oracle", label: "Oracle", render: (c) => this.renderOracleTab(c) },
-            { id: "patron", label: "VIP", icon: "star", render: (c) => this.renderPatronTab(c) },
+            { id: "vip", label: "VIP", icon: "star", render: (c) => this.renderVipTab(c) },
             { id: "mail", label: "Mail", render: (c) => this.renderMailTab(c) },
             { id: "inbox", label: "Inbox", icon: "mails", render: (c) => this.renderInboxTab(c) },
             { id: "blog", label: "Blog", render: (c) => this.renderBlogTab(c) },
@@ -124,10 +124,10 @@ class SettingTab extends PluginSettingTab {
     addToggleSetting(container, { name, desc, key, get, set, save, rerender = false }) {
         get = get ?? (() => this.plugin.settings[key]);
         set = set ?? ((v) => (this.plugin.settings[key] = v));
-        new Setting(container)
-            .setName(name)
-            .setDesc(desc)
-            .addToggle((tg) => tg
+        const setting = new Setting(container).setName(name);
+        if (desc)
+            setting.setDesc(desc);
+        setting.addToggle((tg) => tg
             .setValue(get())
             .onChange(async (v) => {
             set(v);
@@ -294,6 +294,86 @@ class SettingTab extends PluginSettingTab {
         new Setting(c).setName("Allowed surprise animations").setDesc("Click to enable or disable. Dimmed means off.");
         this.renderAnimToggles(c.createDiv(), "surprise");
     }
+    renderCharacterTab(c) {
+        new Setting(c).setName("Character list").setHeading();
+        this.charEditor.mount(c);
+    }
+    // Per-character editor body; fields persist to character-data.json. A rerender is only needed when the change alters which/what sprite shows.
+    renderCharacterBody(containerEl, character, editor) {
+        const box = containerEl.createDiv({ cls: "cc-settings-box" });
+        const save = () => this.plugin.saveDataFile("characterData");
+        const saveRender = () => this.plugin.saveDataFile("characterData", true);
+        this.addTextSetting(box, {
+            name: "Name",
+            placeholder: "(unnamed)",
+            configure: (s) => this.addCharacterToggles(s, character),
+            get: () => character.name,
+            set: (v) => {
+                character.name = v;
+                editor.refreshPillLabel(character.id, v || "(unnamed)");
+            },
+            save: saveRender,
+        });
+        this.addTextSetting(box, {
+            name: "Sprite path",
+            desc: "Vault-relative (e.g. \"Attach/hero.png\"). Either separate multiple image paths by commas, or leave a single folder path to use all images inside it; the two methods can't be mixed. A bare filename works if unique. A single emoji (e.g. \"🦸\") works too.",
+            placeholder: "Attach/happy.png, Attach/angry.png",
+            get: () => character.spritePath,
+            set: (v) => (character.spritePath = v.trim()),
+            save: saveRender,
+        });
+        this.addSliderSetting(box, {
+            name: "Sprite speed", unit: "%",
+            desc: "Compared to the base speed. 0 = stands still, 100 = default, 200 = double.",
+            min: 0, max: 200, step: 10,
+            get: () => character.walkSpeedPct,
+            set: (v) => (character.walkSpeedPct = v),
+            save,
+        });
+        // Stream template vars — all optional; blanks fall back to generic defaults.
+        this.addTextSetting(box, {
+            name: "Epithet",
+            desc: "Their nickname, used as $epithet. Comma-separate several to draw one at random each time (e.g. \"the Demon Lord, the Tyrant\"). Falls back to \"Name\".",
+            placeholder: "the Great Guardian",
+            get: () => character.epithet,
+            set: (v) => (character.epithet = v.trim()),
+            save,
+        });
+        this.addTextSetting(box, {
+            name: "Role",
+            desc: "Their occupation, used as $role. Comma-separate several to draw one at random each time (e.g. \"detective, phantom thief\"). Falls back to \"legend\".",
+            placeholder: "superhero",
+            get: () => character.role,
+            set: (v) => (character.role = v.trim()),
+            save,
+        });
+        this.addTextSetting(box, {
+            name: "Pronouns",
+            desc: "Their pronouns, mapping to $they/$them/$their; optional 4th/5th to $theirs/$themself. Slash-separate (e.g. \"she/her/her\" or \"xe/xem/xyr\"). Falls back to \"they/them/their\".",
+            placeholder: "they/them/their",
+            get: () => character.pronouns,
+            set: (v) => (character.pronouns = v.trim()),
+            save,
+        });
+        new Setting(box).setName("Quotes").setDesc("One quote per line. RiScript ignored.");
+        this.addBulkTextarea(box, {
+            get: () => character.quotes,
+            set: (lines) => (character.quotes = lines),
+            save,
+        });
+        new Setting(box).setName("Deeds").setDesc("What they've done. One verb phrase per line, used as $deed. Append .ing() / .ed() / .s() to inflect (e.g. $deed.ing() = \"conquer the world\" → \"conquering the world\"). Write non-actions with auxiliary verbs (e.g. \"be a master of disguise\").");
+        this.addBulkTextarea(box, {
+            get: () => character.deeds,
+            set: (lines) => (character.deeds = lines),
+            save,
+        });
+        new Setting(box).setName("Topics").setDesc("What they're associated with. One noun phrase per line, used as $topic. Write actions with gerunds (e.g. \"programming and hacking\").");
+        this.addBulkTextarea(box, {
+            get: () => character.topics,
+            set: (lines) => (character.topics = lines),
+            save,
+        });
+    }
     renderDisplayTab(c) {
         new Setting(c).setName("Display in sidebar").setHeading();
         this.addSliderSetting(c, {
@@ -321,7 +401,7 @@ class SettingTab extends PluginSettingTab {
             parse: (n) => typewriterSteps[n],
             readout: (n) => typewriterLabels[n],
         });
-        new Setting(c).setName("Characters in sidebar").setDesc("Click a character to include or exclude it in the sidebar panel. Dimmed means off. Use the \"show another character\" button to draw from those left on.");
+        new Setting(c).setName("Characters in sidebar").setDesc("Click a character to enable or disable it in the sidebar panel. Dimmed means off. Use the \"show another character\" button to draw from those left on.");
         this.mountPillGrid(c, "sidebar");
         new Setting(c).setName("Display in root").setHeading();
         this.addSliderSetting(c, {
@@ -336,12 +416,8 @@ class SettingTab extends PluginSettingTab {
             min: 10, max: 50, step: 2,
             key: "rootWalkSpeed",
         });
-        new Setting(c).setName("Characters in root").setDesc("Click a name to show or hide it walking along the bottom of the window. Dimmed means off. Hide them all to disable this feature entirely.");
+        new Setting(c).setName("Characters in root").setDesc("Click a character to enable or disable it walking along the bottom of the window. Dimmed means off. Disable them all to turn this feature off.");
         this.mountPillGrid(c, "root");
-    }
-    renderCharacterTab(c) {
-        new Setting(c).setName("Character list").setHeading();
-        this.charEditor.mount(c);
     }
     renderStreamTab(c) {
         new Setting(c).setName("Stream mode").setHeading();
@@ -358,13 +434,13 @@ class SettingTab extends PluginSettingTab {
             get: () => this.plugin.settings.streamBackgrounds,
             set: (v) => (this.plugin.settings.streamBackgrounds = v.trim()),
         });
-        new Setting(c).setName("Special effects").setDesc("Click an effect to turn it on or off. Dimmed means off. Can overlay the stream bg and layer on top of each other.");
+        new Setting(c).setName("Special effects").setDesc("Click an effect to enable or disable it. Dimmed means off. Can overlay the stream bg and layer on top of each other.");
         this.mountPillGrid(c, "effect");
-        new Setting(c).setName("Aesthetics").setDesc("Click an element to turn it on or off. Dimmed means off. Can overlay the stream bg.");
+        new Setting(c).setName("Aesthetics").setDesc("Click an element to enable or disable it. Dimmed means off. Can overlay the stream bg.");
         this.mountPillGrid(c, "aesthetic");
         this.addRangeSetting(c, {
             name: "Comment interval",
-            desc: "A new comment appears after a random time in this range.",
+            desc: "A new message appears after a random time in this range.",
             unit: "sec", min: 5, max: 30, step: 5,
             minKey: "streamMinMs", maxKey: "streamMaxMs",
         });
@@ -374,8 +450,8 @@ class SettingTab extends PluginSettingTab {
             min: 1, max: 15, step: 1,
             key: "streamHistoryCount",
         });
-        new Setting(c).setName("Comment sets").setDesc("Click a comment set to include or exclude it. Dimmed means off. Edit comment sets in the Chat tab.");
-        this.mountPillGrid(c, "commentSet");
+        new Setting(c).setName("Comment sets").setDesc("Click a comment set to enable or disable it. Dimmed means off. Edit comment sets in the Chat tab.");
+        this.mountPillGrid(c, "comment");
         new Setting(c).setName("Miscellaneous").setHeading();
         this.addTextSetting(c, {
             name: "Comment font",
@@ -398,28 +474,33 @@ class SettingTab extends PluginSettingTab {
         });
     }
     renderCommentTab(c) {
-        new Setting(c).setName("Comment list").setHeading();
+        new Setting(c).setName("Comment set list").setHeading();
         this.commentEditor.mount(c);
     }
-    renderRoleplayTab(c) {
-        new Setting(c).setName("Roleplay mode").setHeading();
-        this.addToggleSetting(c, {
-            name: "Shared party roll",
-            desc: "When on, double-clicking a button deals the table out of one shared bag, so no two root characters announce the same entry. When off, each character draws its own and repeats can happen.",
-            key: "roleplayShared",
-        });
-        const save = () => this.plugin.saveDataFile("roleplayData");
-        new Setting(c).setName("Structure").setDesc("One chain per line, levels separated by \">\". A level is a single name or a set \"{a, b, c}\". Lines merge by name (\"a > {b, c}\" plus \"b > {d, e}\" attaches d and e under b); names that never follow a \">\" form the first row of buttons. Clicking a name that has a table below makes the character roll it and speak; a name with a next level also moves the buttons there. Double-click a name at the end of a chain to have the root characters speak instead. The buttons return to the first row after sitting idle.");
-        this.addTextarea(c, {
-            get: () => this.plugin.roleplayData.structure,
-            set: (v) => (this.plugin.roleplayData.structure = v),
+    // Per-comment-set editor body.
+    renderCommentBody(containerEl, set, editor) {
+        const box = containerEl.createDiv({ cls: "cc-settings-box" });
+        const save = () => this.plugin.saveDataFile("streamData");
+        this.addTextSetting(box, {
+            name: "Label",
+            placeholder: "(unnamed)",
+            get: () => set.label,
+            set: (v) => {
+                set.label = v;
+                editor.refreshPillLabel(set.id, v || "(unnamed)");
+            },
             save,
         });
-        new Setting(c).setName("Message variety").setHeading();
-        new Setting(c).setName("Tables").setDesc("One random table per line. Format = \"table: a, b, c\" or RiScript \"table: [a (2) | b | c]\". A roll draws one entry. RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, other tables = $table (single-word names), inline choices = [a | b], lexicon = $rndAdj / $rndNoun / $rndVerb.");
-        this.addMapTextarea(c, {
-            get: () => this.plugin.roleplayData.tables,
-            set: (m) => (this.plugin.roleplayData.tables = m),
+        new Setting(box).setName("Comments").setDesc("One comment per line. RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], weighted choices = [a (n) | b], lexicon = $rndNoun / $rndVerb / $rndAdj, random strings = $num / $let / $mix<lo-hi>. Any plain line works as-is.");
+        this.addBulkTextarea(box, {
+            get: () => set.comments,
+            set: (lines) => (set.comments = lines),
+            save,
+        });
+        new Setting(box).setName("Variables").setDesc("One variable per line. Format = \"variable: a, b, c\".");
+        this.addMapTextarea(box, {
+            get: () => set.vars,
+            set: (m) => (set.vars = m),
             save,
         });
     }
@@ -429,18 +510,20 @@ class SettingTab extends PluginSettingTab {
             name: "System title",
             desc: "The channel brand, used as $system. Blank falls back to \"" + ORACLE_SYS_FALLBACK + "\".",
             placeholder: ORACLE_SYS_FALLBACK,
-            key: "oracleSystemName",
+            get: () => this.plugin.settings.oracleSystemName,
+            set: (v) => (this.plugin.settings.oracleSystemName = v.trim()),
         });
         this.addTextSetting(c, {
             name: "Patron origin",
             desc: "The audience species or status, used as $patron. Comma-separate several to draw one at random each time (e.g. \"Demon, Angel\"). Give a custom plural in brackets (e.g. \"Persona (Personae)\"). Blank falls back to \"" + ORACLE_PATRON_FALLBACK + "\".",
             placeholder: ORACLE_PATRON_FALLBACK,
-            key: "oraclePatronName",
+            get: () => this.plugin.settings.oraclePatronName,
+            set: (v) => (this.plugin.settings.oraclePatronName = v.trim()),
         });
         // Three independent interval ranges.
         const interval = (name, kind) => this.addRangeSetting(c, {
             name,
-            desc: "A new message of this type appears after a random time in this range.",
+            desc: "A new message appears after a random time in this range.",
             unit: "sec", min: 5, max: 180, step: 5,
             minKey: "oracle" + kind + "MinMs", maxKey: "oracle" + kind + "MaxMs",
         });
@@ -452,31 +535,31 @@ class SettingTab extends PluginSettingTab {
             desc: "When on, a VIP beat reacts to what you've just typed, if matching its topic; otherwise raises one of its own topics. When off, VIPs are always ambient.",
             key: "oracleVipReactsToTyping",
         });
-        const saveOracle = () => this.plugin.saveDataFile("oracleData");
-        new Setting(c).setName("Patrons in oracle").setDesc("Click a patron to enable or disable it. Dimmed means off. Edit patrons in the VIP tab.");
+        const save = () => this.plugin.saveDataFile("oracleData");
+        new Setting(c).setName("VIP patrons in oracle").setDesc("Click a VIP patron to enable or disable it. Dimmed means off. Edit VIP patrons in the VIP tab.");
         this.mountPillGrid(c, "vip");
         new Setting(c).setName("Message list").setHeading();
         new Setting(c).setName("System messages").setDesc("One message per line. RiScript: entity = $system / $patron / $patrons, inline choices = [a | b].");
         this.addBulkTextarea(c, {
             get: () => this.plugin.oracleData.sysTemplates,
             set: (lines) => (this.plugin.oracleData.sysTemplates = lines),
-            save: saveOracle,
+            save,
         });
         new Setting(c).setName("Anonymous messages").setDesc("One message per line. RiScript: entity = $system / $patron / $patrons, inline choices = [a | b].");
         this.addBulkTextarea(c, {
             get: () => this.plugin.oracleData.anonTemplates,
             set: (lines) => (this.plugin.oracleData.anonTemplates = lines),
-            save: saveOracle,
+            save,
         });
         this.addConstantsSection(c, {
             desc: "One constant per line. Format = \"constant: a, b, c\". Shared across Sys / Anon / VIP messages.",
             get: () => this.plugin.oracleData.constants,
             set: (m) => (this.plugin.oracleData.constants = m),
-            save: saveOracle,
+            save,
         });
     }
-    renderPatronTab(c) {
-        new Setting(c).setName("Patron list").setHeading();
+    renderVipTab(c) {
+        new Setting(c).setName("VIP list").setHeading();
         this.vipEditor.mount(c);
     }
     // Per-VIP editor body; all fields persist to oracle-data.json.
@@ -517,11 +600,11 @@ class SettingTab extends PluginSettingTab {
         new Setting(c).setName("Mail mode").setHeading();
         this.addRangeSetting(c, {
             name: "Mail interval",
-            desc: "A new mail appears after a random time in this range.",
+            desc: "A new message appears after a random time in this range.",
             unit: "min", min: 1, max: 60,
             minKey: "mailMinMs", maxKey: "mailMaxMs",
         });
-        new Setting(c).setName("Mail templates").setDesc("Click a mail template to include or exclude it. Dimmed means off. Edit mail templates in the Inbox tab.");
+        new Setting(c).setName("Mail templates").setDesc("Click a mail template to enable or disable it. Dimmed means off. Edit mail templates in the Inbox tab.");
         this.mountPillGrid(c, "mail");
         this.addConstantsSection(c, {
             desc: "One constant per line. Format = \"constant: a, b, c\". Shared across all mail templates.",
@@ -531,57 +614,8 @@ class SettingTab extends PluginSettingTab {
         });
     }
     renderInboxTab(c) {
-        new Setting(c).setName("Mail list").setHeading();
+        new Setting(c).setName("Mail template list").setHeading();
         this.mailEditor.mount(c);
-    }
-    renderBlogTab(c) {
-        new Setting(c).setName("Blog mode").setHeading();
-        this.addRangeSetting(c, {
-            name: "Blog interval",
-            desc: "A new blog appears after a random time in this range.",
-            unit: "min", min: 0.5, max: 30, step: 0.5,
-            minKey: "blogMinMs", maxKey: "blogMaxMs",
-        });
-        new Setting(c).setName("Message list").setHeading();
-        new Setting(c).setName("Microblogs").setDesc("One blog per line. Format = \"@handle #tags blog content\". @handle and #tags are optional. RiScript: random user = $handle, named user = $celebrity, inline choices = [a | b], lexicon = $rndNoun / $rndVerb / $rndAdj.");
-        this.addBulkTextarea(c, {
-            get: () => this.plugin.blogData.messages,
-            set: (lines) => (this.plugin.blogData.messages = lines),
-            save: () => this.plugin.saveDataFile("blogData"),
-        });
-        this.addConstantsSection(c, {
-            desc: "One constant per line. Format = \"constant: a, b, c\".",
-            get: () => this.plugin.blogData.constants,
-            set: (m) => (this.plugin.blogData.constants = m),
-            save: () => this.plugin.saveDataFile("blogData"),
-        });
-    }
-    renderNewsTab(c) {
-        new Setting(c).setName("News mode").setHeading();
-        this.addRangeSetting(c, {
-            name: "News interval",
-            desc: "A new chyron pass (or feed beat) appears after a random time in this range.",
-            unit: "min", min: 0.5, max: 30, step: 0.5,
-            minKey: "newsMinMs", maxKey: "newsMaxMs",
-        });
-        this.addToggleSetting(c, {
-            name: "News to feed instead of chyron",
-            desc: "Off scrolls several headlines across the bottom chyron. On drops one headline into the comment feed.",
-            key: "newsToFeed",
-        });
-        new Setting(c).setName("Message list").setHeading();
-        new Setting(c).setName("Headlines").setDesc("One headline per line. Format = \"[Section] headline content\". [Section] is optional. RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], lexicon = $rndAdj / $rndNoun / $rndVerb.");
-        this.addBulkTextarea(c, {
-            get: () => this.plugin.newsData.messages,
-            set: (lines) => (this.plugin.newsData.messages = lines),
-            save: () => this.plugin.saveDataFile("newsData"),
-        });
-        this.addConstantsSection(c, {
-            desc: "One constant per line. Format = \"constant: a, b, c\".",
-            get: () => this.plugin.newsData.constants,
-            set: (m) => (this.plugin.newsData.constants = m),
-            save: () => this.plugin.saveDataFile("newsData"),
-        });
     }
     // Per-mail-template editor body; all fields persist to mail-data.json.
     renderMailBody(containerEl, mail, editor) {
@@ -590,8 +624,8 @@ class SettingTab extends PluginSettingTab {
         this.addTextSetting(box, {
             name: "Label",
             placeholder: "(unnamed)",
-            get: () => mail.name,
-            set: (v) => { mail.name = v; editor.refreshPillLabel(mail.id, v || "(unnamed)"); },
+            get: () => mail.label,
+            set: (v) => { mail.label = v; editor.refreshPillLabel(mail.id, v || "(unnamed)"); },
             save,
         });
         this.addTextSetting(box, {
@@ -618,8 +652,57 @@ class SettingTab extends PluginSettingTab {
             set: (v) => (mail.to = v),
             save,
         });
-        new Setting(box).setName("Content").setDesc("Multi-line. A blank line separates templates to draw one at random each time. RiScript: random strings = $num / $let / $mix<lo-hi>, character vars = $name / $epithet / $role / $deed / $topic, constants = $npc / $gang / $corp, inline choices = [chad | loser | someone], lexicon fillers = $rndNoun / $rndVerb / $rndAdj, plus $to for content to repeat the addressee.");
+        new Setting(box).setName("Content").setDesc("Multi-line. A blank line separates templates to draw one at random each time. RiScript: character vars = $name / $epithet / $role / $deed / $topic, constants = $npc / $gang / $corp, inline choices = [a | b], lexicon = $rndNoun / $rndVerb / $rndAdj, random strings = $num / $let / $mix<lo-hi>, plus $to for content to repeat the addressee.");
         this.addTextarea(box, { get: () => mail.content, set: (v) => (mail.content = v), save, rows: 6 });
+    }
+    renderBlogTab(c) {
+        new Setting(c).setName("Blog mode").setHeading();
+        this.addRangeSetting(c, {
+            name: "Blog interval",
+            desc: "A new message appears after a random time in this range.",
+            unit: "min", min: 0.5, max: 30, step: 0.5,
+            minKey: "blogMinMs", maxKey: "blogMaxMs",
+        });
+        new Setting(c).setName("Message list").setHeading();
+        new Setting(c).setName("Microblogs").setDesc("One blog per line. Format = \"@handle #tags blog content\". @handle and #tags are optional. RiScript: random user = $handle, named user = $celebrity, inline choices = [a | b], lexicon = $rndNoun / $rndVerb / $rndAdj.");
+        this.addBulkTextarea(c, {
+            get: () => this.plugin.blogData.messages,
+            set: (lines) => (this.plugin.blogData.messages = lines),
+            save: () => this.plugin.saveDataFile("blogData"),
+        });
+        this.addConstantsSection(c, {
+            desc: "One constant per line. Format = \"constant: a, b, c\".",
+            get: () => this.plugin.blogData.constants,
+            set: (m) => (this.plugin.blogData.constants = m),
+            save: () => this.plugin.saveDataFile("blogData"),
+        });
+    }
+    renderNewsTab(c) {
+        new Setting(c).setName("News mode").setHeading();
+        this.addRangeSetting(c, {
+            name: "News interval",
+            desc: "A new message appears after a random time in this range.",
+            unit: "min", min: 0.5, max: 30, step: 0.5,
+            minKey: "newsMinMs", maxKey: "newsMaxMs",
+        });
+        this.addToggleSetting(c, {
+            name: "News to feed instead of chyron",
+            desc: "Off scrolls several headlines across the bottom chyron. On drops one headline into the comment feed.",
+            key: "newsToFeed",
+        });
+        new Setting(c).setName("Message list").setHeading();
+        new Setting(c).setName("Headlines").setDesc("One headline per line. Format = \"[Section] headline content\". [Section] is optional. RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], lexicon = $rndNoun / $rndVerb / $rndAdj.");
+        this.addBulkTextarea(c, {
+            get: () => this.plugin.newsData.messages,
+            set: (lines) => (this.plugin.newsData.messages = lines),
+            save: () => this.plugin.saveDataFile("newsData"),
+        });
+        this.addConstantsSection(c, {
+            desc: "One constant per line. Format = \"constant: a, b, c\".",
+            get: () => this.plugin.newsData.constants,
+            set: (m) => (this.plugin.newsData.constants = m),
+            save: () => this.plugin.saveDataFile("newsData"),
+        });
     }
     renderShowTab(c) {
         new Setting(c).setName("Show list").setHeading();
@@ -654,8 +737,30 @@ class SettingTab extends PluginSettingTab {
             save,
             readout: (v) => v === 0 ? "Off" : ":" + String(v % 60).padStart(2, "0"),
         });
-        new Setting(box).setName("Content").setDesc("Multi-line. A blank line separates episodes to draw one at random each time. RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], lexicon = $rndAdj / $rndNoun / $rndVerb.");
+        new Setting(box).setName("Content").setDesc("Multi-line. A blank line separates episodes to draw one at random each time. RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], lexicon = $rndNoun / $rndVerb / $rndAdj.");
         this.addTextarea(box, { get: () => show.content, set: (v) => (show.content = v), save, rows: 6 });
+    }
+    renderRoleplayTab(c) {
+        new Setting(c).setName("Roleplay mode").setHeading();
+        this.addToggleSetting(c, {
+            name: "Shared party roll",
+            desc: "When on, characters never announce the same entry. When off, each character draws its own and may repeat.",
+            key: "roleplayShared",
+        });
+        const save = () => this.plugin.saveDataFile("roleplayData");
+        new Setting(c).setName("Structure chains").setDesc("One chain per line. Format = \"a > {b, c}\". Click to make the sidebar characters roll it and speak. Double-click to make the root characters speak.");
+        this.addTextarea(c, {
+            get: () => this.plugin.roleplayData.structure,
+            set: (v) => (this.plugin.roleplayData.structure = v),
+            save,
+        });
+        new Setting(c).setName("Message variety").setHeading();
+        new Setting(c).setName("Random tables").setDesc("One table per line. Format = \"table: a, b, c\" or \"table: [a (n) | b | c]\". RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, other tables = $table (comma-separate words), inline choices = [a | b], lexicon = $rndNoun / $rndVerb / $rndAdj.");
+        this.addMapTextarea(c, {
+            get: () => this.plugin.roleplayData.tables,
+            set: (m) => (this.plugin.roleplayData.tables = m),
+            save,
+        });
     }
     // An on/off pill per animation of a role, wired to its settings flag map.
     renderAnimToggles(host, role) {
@@ -720,9 +825,9 @@ class SettingTab extends PluginSettingTab {
             set: (v) => set(c, v),
         }));
     }
-    // Pill entries over a named list carrying its own `enabled` flag.
-    enablePills(list) {
-        return list.map((it) => ({ label: it.name || "(unnamed)", get: () => it.enabled, set: (v) => { it.enabled = v; } }));
+    // Pill entries over a named list carrying its own `enabled` flag; `labelKey` names the display field (default "name").
+    enablePills(list, labelKey = "name") {
+        return list.map((it) => ({ label: it[labelKey] || "(unnamed)", get: () => it.enabled, set: (v) => { it.enabled = v; } }));
     }
     // Pill entries over a registry whose on/off lives in a shared flag map keyed by row.
     flagPills(registry, flags) {
@@ -760,112 +865,6 @@ class SettingTab extends PluginSettingTab {
                 });
             });
         }
-    }
-    // Per-character editor body; fields persist to character-data.json. A rerender is only needed when the change alters which/what sprite shows.
-    renderCharacterBody(containerEl, character, editor) {
-        const box = containerEl.createDiv({ cls: "cc-settings-box" });
-        const save = () => this.plugin.saveDataFile("characterData");
-        const saveRender = () => this.plugin.saveDataFile("characterData", true);
-        this.addTextSetting(box, {
-            name: "Name",
-            placeholder: "(unnamed)",
-            configure: (s) => this.addCharacterToggles(s, character),
-            get: () => character.name,
-            set: (v) => {
-                character.name = v;
-                editor.refreshPillLabel(character.id, v || "(unnamed)");
-                this.rebuildPillGrid("root");
-                this.rebuildPillGrid("sidebar");
-            },
-            save: saveRender,
-        });
-        this.addTextSetting(box, {
-            name: "Sprite path",
-            desc: "Vault-relative (e.g. \"Attach/hero.png\"). Either separate multiple image paths by commas, or leave a single folder path to use all images inside it; the two methods can't be mixed. A bare filename works if unique. A single emoji (e.g. \"🦸\") works too.",
-            placeholder: "Attach/happy.png, Attach/angry.png",
-            get: () => character.spritePath,
-            set: (v) => (character.spritePath = v.trim()),
-            save: saveRender,
-        });
-        this.addSliderSetting(box, {
-            name: "Sprite speed", unit: "%",
-            desc: "Compared to the base speed. 0 = stands still, 100 = default, 200 = double.",
-            min: 0, max: 200, step: 10,
-            get: () => character.walkSpeedPct,
-            set: (v) => (character.walkSpeedPct = v),
-            save,
-        });
-        // Stream template vars — all optional; blanks fall back to generic defaults.
-        this.addTextSetting(box, {
-            name: "Epithet",
-            desc: "Their nickname, used as $epithet. Comma-separate several to draw one at random each time (e.g. \"the Demon Lord, the Tyrant\"). Falls back to \"Name\".",
-            placeholder: "the Great Guardian",
-            get: () => character.epithet,
-            set: (v) => (character.epithet = v.trim()),
-            save,
-        });
-        this.addTextSetting(box, {
-            name: "Role",
-            desc: "Their occupation, used as $role. Comma-separate several to draw one at random each time (e.g. \"detective, phantom thief\"). Falls back to \"legend\".",
-            placeholder: "superhero",
-            get: () => character.role,
-            set: (v) => (character.role = v.trim()),
-            save,
-        });
-        this.addTextSetting(box, {
-            name: "Pronouns",
-            desc: "Their pronouns, mapping to $they/$them/$their; optional 4th/5th to $theirs/$themself. Slash-separate (e.g. \"she/her/her\" or \"xe/xem/xyr\"). Falls back to \"they/them/their\".",
-            placeholder: "they/them/their",
-            get: () => character.pronouns,
-            set: (v) => (character.pronouns = v.trim()),
-            save,
-        });
-        new Setting(box).setName("Quotes").setDesc("One quote per line. RiScript ignored.");
-        this.addBulkTextarea(box, {
-            get: () => character.quotes,
-            set: (lines) => (character.quotes = lines),
-            save,
-        });
-        new Setting(box).setName("Deeds").setDesc("What they've done. One verb phrase per line, used as $deed. Append .ing() / .ed() / .s() to inflect (e.g. $deed.ing() = \"conquer the world\" → \"conquering the world\"). Write non-actions with auxiliary verbs (e.g. \"be a master of disguise\").");
-        this.addBulkTextarea(box, {
-            get: () => character.deeds,
-            set: (lines) => (character.deeds = lines),
-            save,
-        });
-        new Setting(box).setName("Topics").setDesc("What they're associated with. One noun phrase per line, used as $topic. Write actions with gerunds (e.g. \"programming and hacking\").");
-        this.addBulkTextarea(box, {
-            get: () => character.topics,
-            set: (lines) => (character.topics = lines),
-            save,
-        });
-    }
-    // Per-comment-set editor body.
-    renderCommentSetBody(containerEl, set, editor) {
-        const box = containerEl.createDiv({ cls: "cc-settings-box" });
-        const save = () => this.plugin.saveDataFile("streamData");
-        this.addTextSetting(box, {
-            name: "Label",
-            placeholder: "(unnamed)",
-            get: () => set.name,
-            set: (v) => {
-                set.name = v;
-                editor.refreshPillLabel(set.id, v || "(unnamed)");
-                this.rebuildPillGrid("commentSet");
-            },
-            save,
-        });
-        new Setting(box).setName("Comments").setDesc("One comment per line. RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, inflections = $deed.ing() / .ed() / .s(), inline choices = [a | b], weighted choices = [a(n) | b], lexicon = $rndAdj / $rndNoun / $rndVerb, string = $num<1-9> / $let<5-7> / $mix<2-6> (also $let-lower / $let-upper / $mix-lower / $mix-upper). Any plain line works as-is.");
-        this.addBulkTextarea(box, {
-            get: () => set.comments,
-            set: (lines) => (set.comments = lines),
-            save,
-        });
-        new Setting(box).setName("Variables").setDesc("One variable per line. Format = \"variable: a, b, c\".");
-        this.addMapTextarea(box, {
-            get: () => set.vars,
-            set: (m) => (set.vars = m),
-            save,
-        });
     }
 }
 module.exports = { SettingTab };

@@ -641,6 +641,7 @@ class Walker {
             if (this.imgEl.src !== url)
                 return;
             this.wrapEl.setCssProps({ "--cc-bubble-inset": frac * this.imgEl.offsetHeight + "px" });
+            this.positionBubble();
         });
     }
     // Place the body-level sidebar bubble against the sprite (viewport coordinates — it lives on <body> so no panel frame clips it). No-op for the CSS-positioned floor bubble.

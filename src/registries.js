@@ -94,7 +94,7 @@ const AESTHETICS = [
 ];
 const AESTHETIC_KEYS = AESTHETICS.map((a) => a.key);
 // {name: bool} map over `names`, each from `src` if a boolean there, else `def`.
-const boolMap = (names, src = {}, def = true) => Object.fromEntries(names.map((n) => [n, typeof src[n] === "boolean" ? src[n] : def]));
+const boolMap = (names, src = {}, def = true) => Object.fromEntries(names.map((n) => [n, typeof src?.[n] === "boolean" ? src[n] : def]));
 const strList = (v) => Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
 // {name: string[]} map (variables / constants): keep string lists, drop empties.
 const strMap = (v) => {
@@ -129,7 +129,7 @@ const CHARACTER_SCHEMA = [
     ...CHARACTER_TOGGLES.map((t) => ({ key: t.key, coerce: bool(false) })),
 ];
 const COMMENT_SET_SCHEMA = [
-    { key: "name", coerce: str },
+    { key: "label", coerce: str },
     { key: "comments", coerce: strList },
     { key: "enabled", coerce: bool(true) },
     // Per-set variables {name: [...]} — $name choice rules visible only to this set's lines.
@@ -149,9 +149,9 @@ const VIP_SCHEMA = [
     // Per-VIP variables {name: [...]}, usable as $name inside frames.
     { key: "vars", coerce: strMap },
 ];
-// Mail template: Title/From/To are RiScript lines; Content contains blank-line-delimited RiScript episodes. 'name' is the admin pill label.
+// Mail template: Title/From/To are RiScript lines; Content contains blank-line-delimited RiScript episodes. 'label' is the admin pill label.
 const MAIL_SCHEMA = [
-    { key: "name", coerce: str },
+    { key: "label", coerce: str },
     { key: "title", coerce: str },
     { key: "from", coerce: str },
     { key: "to", coerce: str },
@@ -204,7 +204,7 @@ const SEED_CHARACTERS = {
 };
 const SEED_STREAM = {
     commentSets: [{
-        id: "seed-sample", name: "Sample", enabled: true,
+        id: "seed-sample", label: "Sample", enabled: true,
         comments: [
             "$name is out here $deed.ing() again, chat",
             "not $epithet showing up just to $deed",
@@ -234,7 +234,7 @@ const SEED_ROLEPLAY = {
 const SEED_MAIL = {
     constants: { npc: ["The Metro Times", "City Hall", "an anonymous admirer", "YOUR EDITOR"] },
     mailTemplates: [{
-        id: "seed-mail-1", name: "Fan letter", enabled: true,
+        id: "seed-mail-1", label: "Fan letter", enabled: true,
         title: "[Heard good things about you... | Regarding recent events]",
         from: "$npc",
         to: "$name, $epithet",

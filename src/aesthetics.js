@@ -294,7 +294,7 @@ class Aesthetics {
     }
     // News mode's chyron face is selected (the bar face; the newsToFeed switch picks feed bubbles instead).
     chyronMode() {
-        return this.settings.streamEnabled && this.settings.newsEnabled && !this.settings.newsToFeed;
+        return this.settings.newsEnabled && !this.settings.newsToFeed;
     }
     // A fresh pass can go out: the chyron face is live and nothing (a pass in flight, an airing) is ahead of it. pushNews gates each news beat on this BEFORE building its strip, so a dropped beat draws no extra headlines.
     chyronReady() {
