@@ -115,6 +115,7 @@
 
     /* Roleplay option bar: idle time before the row returns to the first level (any pointer activity over the bar re-arms it). */
     --cc-roleplay-idle-reset: 30000ms;
+    --cc-roleplay-drag-gap: 12px;
 
     /* News chyron (cadence comes from the news interval setting, not here). */
     --cc-news-chyron-max: 3;        /* max headlines per pass; each pass rolls 1..max */

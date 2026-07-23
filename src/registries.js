@@ -417,7 +417,6 @@ const SETTINGS_SCHEMA = [
     { key: "newsMaxMs", coerce: bounded(360000, 30000, 1800000) },
     { key: "newsToFeed", coerce: bool(false) },
     { key: "roleplayEnabled", coerce: bool(false) },
-    { key: "roleplayShared", coerce: bool(true) },
     { key: "commentFont", coerce: str },
     { key: "giftEmojiFont", coerce: str },
     { key: "giftEmojis", coerce: str },

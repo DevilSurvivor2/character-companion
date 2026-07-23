@@ -217,7 +217,20 @@ class SettingTab extends PluginSettingTab {
                     const i = line.indexOf(":");
                     if (i < 0) continue;
                     const key = line.slice(0, i).trim();
-                    const vals = line.slice(i + 1).split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+                    // Split on top-level commas only, so a bracketed [a | b] value keeps its internal commas.
+                    const vals = [];
+                    let depth = 0;
+                    let start = i + 1;
+                    for (let j = i + 1; j <= line.length; j++) {
+                        const ch = line[j];
+                        if (ch === "[") depth++;
+                        else if (ch === "]") depth = Math.max(0, depth - 1);
+                        else if (j === line.length || (ch === "," && depth === 0)) {
+                            const val = line.slice(start, j).trim();
+                            if (val.length) vals.push(val);
+                            start = j + 1;
+                        }
+                    }
                     if (key && vals.length) out[key] = vals;
                 }
                 return out;
@@ -742,20 +755,15 @@ class SettingTab extends PluginSettingTab {
     }
     renderRoleplayTab(c) {
         new Setting(c).setName("Roleplay mode").setHeading();
-        this.addToggleSetting(c, {
-            name: "Shared party roll",
-            desc: "When on, characters never announce the same entry. When off, each character draws its own and may repeat.",
-            key: "roleplayShared",
-        });
         const save = () => this.plugin.saveDataFile("roleplayData");
-        new Setting(c).setName("Structure chains").setDesc("One chain per line. Format = \"a > {b, c}\". Click to make the sidebar characters roll it and speak. Double-click to make the root characters speak.");
+        new Setting(c).setName("Structure chains").setDesc("One chain per line. Format = \"a > {b, c}\". Click an option to make the sidebar character roll it and speak, or drag it onto one root character to make that character roll it and speak.");
         this.addTextarea(c, {
             get: () => this.plugin.roleplayData.structure,
             set: (v) => (this.plugin.roleplayData.structure = v),
             save,
         });
         new Setting(c).setName("Message variety").setHeading();
-        new Setting(c).setName("Random tables").setDesc("One table per line. Format = \"table: a, b, c\" or \"table: [a (n) | b | c]\". RiScript: character vars = $name / $epithet / $role / $deed / $topic, character pronouns = $they / $them / $their, other tables = $table (comma-separate words), inline choices = [a | b], lexicon = $rndNoun / $rndVerb / $rndAdj.");
+        new Setting(c).setName("Random tables").setDesc("One table per line. Format = \"table: a, b, c\" or \"table: [a (n) | b | c]\". RiScript: character vars = $name / $epithet / $role / $deed / $topic, random displayed root character = $player (falls back to \"Player\"), character pronouns = $they / $them / $their, other tables = $table (comma-separate words), inline choices = [a | b], lexicon = $rndNoun / $rndVerb / $rndAdj.");
         this.addMapTextarea(c, {
             get: () => this.plugin.roleplayData.tables,
             set: (m) => (this.plugin.roleplayData.tables = m),

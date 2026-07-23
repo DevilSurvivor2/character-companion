@@ -1,7 +1,7 @@
 "use strict";
 const { setIcon } = require("obsidian");
 const { AESTHETICS } = require("./registries.js");
-const { bubbleHoldMs, formatHMS, pick, randRange, reconcileTimer, shuffle, tuning } = require("./toolkit.js");
+const { bubbleHoldMs, capturePointer, formatHMS, pick, randRange, reconcileTimer, releasePointer, tuning } = require("./toolkit.js");
 // Parse one source-stamped roleplay graph snapshot; valid means it has a reachable root level.
 function parseRoleplayGraph(text) {
     const source = String(text || "");
@@ -186,50 +186,94 @@ class Aesthetics {
         like.addEventListener("click", () => this.spawnHeart());
         return { el: react };
     }
-    // "roleplay" occupant: one row over the current graph level; a saved structure refresh resets it to the new roots. Clicking a pooled node makes the GM speak and descends when children exist; double-clicking a leaf rolls once per floor character. Pointer activity re-arms the idle return home.
+    // "roleplay" occupant: one row over the current graph level; a saved structure refresh resets it to the new roots. Clicking makes the GM roll, while dragging onto a floor walker makes only that walker roll. Pointer activity re-arms the idle return home.
     buildRoleplay(bar) {
         const el = bar.createDiv({ cls: "cc-aes-roleplay cc-hijack cc-hijack-hidden" });
-        // Current level as node names (null = the roots), the idle-reset timer, and the pending leaf click awaiting its double-click window.
+        // Current level as node names (null = the roots), the idle-reset timer, and the active option drag.
         let level = null;
         let idleTimer = null;
-        let clickTimer = null;
-        let clickName = null;
+        let drag = null;
         let appliedGraph = this.getRoleplayGraph();
-        // Evaluate one drawn entry against the character context with every table layered as a choice rule, so entries can nest other tables via $table. "" = nothing drawn / engine pending.
-        const evalEntry = (line, character) => {
-            if (!line)
-                return "";
-            return this.plugin.riscript.evalTrim(line, this.view.charCtx(this.plugin.roleplayData.tables, character));
-        };
-        // One roll: a fresh draw from the table.
-        const roll = (name, character) => {
-            const entries = this.plugin.roleplayData.tables[name];
-            return evalEntry(entries ? pick(entries) : "", character);
-        };
-        const gmRoll = (name) => {
-            const text = roll(name);
-            if (text)
-                this.view.walker?.speak(text);
-        };
-        // Party roll: shared deals the table out of ONE shuffled bag, so no two walkers land the same entry (wrapping only once walkers outnumber entries); independent lets each walker draw with replacement.
-        const partyRoll = (name) => {
-            const entries = this.plugin.roleplayData.tables[name] ?? [];
-            if (entries.length === 0)
+        // Draw and evaluate once with every table layered as a choice rule, so entries can nest other tables via $table.
+        const speakRoll = (name, walker) => {
+            if (!walker)
                 return;
-            const bag = this.settings.roleplayShared ? shuffle([...entries]) : null;
-            let i = 0;
-            for (const w of this.plugin.stage.walkers.values())
-                w.speak(bag ? evalEntry(bag[i++ % bag.length], w.character) : roll(name, w.character));
+            const line = pick(this.plugin.roleplayData.tables[name] ?? []);
+            if (!line)
+                return;
+            const ctx = this.view.charCtx(this.plugin.roleplayData.tables, walker.character);
+            const players = this.plugin.stage ? [...this.plugin.stage.walkers.values()]
+                .map((w) => (w.character.name || "").trim()).filter(Boolean) : [];
+            ctx.player = pick(players) || "Player";
+            const text = this.plugin.riscript.evalTrim(line, ctx);
+            if (text)
+                walker.speak(text);
+        };
+        const cancelDrag = () => {
+            if (!drag)
+                return;
+            const { button, pointerId, ghost } = drag;
+            drag = null;
+            el.doc.removeEventListener("pointermove", moveDrag);
+            el.doc.removeEventListener("pointerup", finishDrag);
+            el.doc.removeEventListener("pointercancel", cancelPointer);
+            releasePointer(button, pointerId);
+            button.removeClass("cc-roleplay-dragging");
+            ghost?.remove();
+        };
+        const moveDrag = (e) => {
+            if (!drag || e.pointerId !== drag.pointerId)
+                return;
+            if (!drag.ghost) {
+                if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < tuning().dragThreshold)
+                    return;
+                drag.button.addClass("cc-roleplay-dragging");
+                drag.ghost = el.doc.body.createDiv({ cls: "cc-aes-roleplay-btn cc-roleplay-drag", text: drag.name });
+            }
+            drag.ghost.setCssProps({ left: e.clientX + "px", top: e.clientY + "px" });
+            e.preventDefault();
+        };
+        const finishDrag = (e) => {
+            if (!drag || e.pointerId !== drag.pointerId)
+                return;
+            const dragged = !!drag.ghost;
+            const name = drag.name;
+            const dropRect = drag.ghost?.getBoundingClientRect();
+            const walker = dropRect ? this.plugin.stage?.walkerOverlapping(dropRect) : null;
+            cancelDrag();
+            if (walker)
+                speakRoll(name, walker);
+            else if (!dragged)
+                onClick(name);
+            if (dragged)
+                e.preventDefault();
+        };
+        const cancelPointer = (e) => {
+            if (drag && e.pointerId === drag.pointerId)
+                cancelDrag();
         };
         const cancelIdle = () => { if (idleTimer != null) { this.win.clearTimeout(idleTimer); idleTimer = null; } };
-        const cancelClick = () => { if (clickTimer != null) { this.win.clearTimeout(clickTimer); clickTimer = null; } };
         const render = () => {
+            cancelDrag();
             const names = level ?? this.getRoleplayGraph().roots;
             el.empty();
             el.setCssProps({ "--cc-roleplay-cols": String(Math.max(1, names.length)) });
             for (const name of names) {
                 const btn = el.createEl("button", { cls: "cc-aes-roleplay-btn", text: name });
-                btn.addEventListener("click", () => onClick(name));
+                btn.addEventListener("pointerdown", (e) => {
+                    if (e.button !== 0)
+                        return;
+                    cancelDrag();
+                    drag = { button: btn, ghost: null, name, pointerId: e.pointerId, x: e.clientX, y: e.clientY };
+                    el.doc.addEventListener("pointermove", moveDrag);
+                    el.doc.addEventListener("pointerup", finishDrag);
+                    el.doc.addEventListener("pointercancel", cancelPointer);
+                    capturePointer(btn, e.pointerId);
+                });
+                btn.addEventListener("click", (e) => {
+                    if (e.detail === 0)
+                        onClick(name);
+                });
             }
         };
         // Return to the roots through the hijack recipe (the show occupant's per-line pattern: snap out, fade back in). Only the armed idle timer calls this, and stop() cancels it, so it can never fire while another row holds the bar.
@@ -247,38 +291,21 @@ class Aesthetics {
             if (level)
                 idleTimer = this.win.setTimeout(goHome, tuning().roleplayIdleReset);
         };
-        const reconcile = () => {
+        const syncGraph = () => {
             const graph = this.getRoleplayGraph();
-            if (graph !== appliedGraph) {
-                appliedGraph = graph;
-                level = null;
-                cancelClick();
-                render();
-            }
-            armIdle();
+            if (graph === appliedGraph)
+                return false;
+            appliedGraph = graph;
+            level = null;
+            render();
+            return true;
         };
         const onClick = (name) => {
             const kids = this.getRoleplayGraph().children.get(name) ?? [];
-            // A pending leaf click resolves first: doubled on the same name it becomes the party's roll, else it fires as its own single click.
-            const doubled = clickTimer != null && clickName === name && kids.length === 0;
-            if (clickTimer != null) {
-                const prev = clickName;
-                cancelClick();
-                if (!doubled)
-                    gmRoll(prev);
-            }
-            if (doubled)
-                partyRoll(name);
-            else if (kids.length > 0) {
-                // Branch: narrate when pooled and descend at once — double-click semantics are leaf-only.
-                gmRoll(name);
+            speakRoll(name, this.view.walker);
+            if (kids.length > 0) {
                 level = kids;
                 render();
-            }
-            else if (this.plugin.roleplayData.tables[name]) {
-                // Leaf: hold the GM roll for one double-click window so a second click can claim it. A pool-less leaf is a clickable no-op.
-                clickName = name;
-                clickTimer = this.win.setTimeout(() => { clickTimer = null; gmRoll(name); }, tuning().doubleClick);
             }
             armIdle();
         };
@@ -287,9 +314,9 @@ class Aesthetics {
         return {
             el,
             // Regaining the bar preserves its level unless saved data replaced the graph.
-            start: reconcile,
-            sync: reconcile,
-            stop: () => { cancelIdle(); cancelClick(); },
+            start: () => { syncGraph(); armIdle(); },
+            sync: () => { if (syncGraph()) armIdle(); },
+            stop: () => { cancelIdle(); cancelDrag(); },
         };
     }
     // News mode's chyron face is selected (the bar face; the newsToFeed switch picks feed bubbles instead).

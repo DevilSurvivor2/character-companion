@@ -220,6 +220,24 @@ class CompanionStage {
     shuffleLayers() {
         shuffle([...this.walkers.values()]).forEach((w, i) => this.setZ(w, i + 1));
     }
+    // Return the floor walker with the greatest sprite-box overlap, breaking ties toward the front.
+    walkerOverlapping(rect) {
+        let hit = null;
+        let bestArea = 0;
+        for (const w of this.walkers.values()) {
+            const r = w.imgEl.getBoundingClientRect();
+            const width = Math.max(0, Math.min(rect.right, r.right) - Math.max(rect.left, r.left));
+            const height = Math.max(0, Math.min(rect.bottom, r.bottom) - Math.max(rect.top, r.top));
+            const area = width * height;
+            if (area === 0)
+                continue;
+            if (area > bestArea || (area === bestArea && (!hit || w.z > hit.z))) {
+                hit = w;
+                bestArea = area;
+            }
+        }
+        return hit;
+    }
     // Play the tickle giggle on the walker under the point, if any.
     tickleWalkerAt(x, y) {
         if (y < this.stageTop())
